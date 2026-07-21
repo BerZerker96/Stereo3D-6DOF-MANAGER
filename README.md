@@ -1,5 +1,7 @@
 <div align="center">
 
+<img width="1584" height="672" alt="1784444271884" src="https://github.com/user-attachments/assets/3d194de6-8be3-4a81-8cb9-30e589ca2979" />
+
 # 🥽 Stereo 3D / 6DoF Manager
 
 ### One‑click setup for stereoscopic‑3D & 6DOF head‑tracking game mods
