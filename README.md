@@ -1,7 +1,5 @@
 <div align="center">
 
-<img width="1584" height="672" alt="1784444271884" src="https://github.com/user-attachments/assets/3d194de6-8be3-4a81-8cb9-30e589ca2979" />
-
 # 🥽 Stereo 3D / 6DoF Manager
 
 ### One‑click setup for stereoscopic‑3D & 6DOF head‑tracking game mods
@@ -13,7 +11,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)
 ![APIs](https://img.shields.io/badge/APIs-DX9%20·%20DX10%20·%20DX11%20·%20DX12%20·%20Vulkan%20·%20OpenGL-1a6a7a)
 ![Games](https://img.shields.io/badge/Game%20database-819%20titles-2a71a8)
-![Mods](https://img.shields.io/badge/Managed%20mods-15-0e7f93)
+![Mods](https://img.shields.io/badge/Managed%20mods-17-0e7f93)
 ![Built with](https://img.shields.io/badge/Built%20with-Electron-47848F?logo=electron&logoColor=white)
 
 </div>
@@ -42,9 +40,12 @@ Playing PC games in **stereoscopic 3D** or with **6DOF head tracking** usually m
 | 🖼️ | **Dynamic output picker** | The output list adapts to each mod's real formats (SBS, TAB, interlaced, checkerboard, VR…). |
 | 🎯 | **6DOF auto‑match** | Understands the game *name* and matches a BerZerker or itsloopyo head‑tracking mod. |
 | 🕹️ | **6DOF manual picker** | Pick **any** mod & version from either catalogue — including combined **3D + 6DOF** builds. |
+| 🎮 | **DX → DX11 (dgVoodoo2)** | One‑button, built‑in: converts DX7/8/9/10 games to DirectX 11 with the right DLL for the API + bitness. |
+| ⛭ | **D3D9 full‑res VR proxy** | Optional manual button that sets up the `geod3d9.dll` native fast path for SuperDepth3D or Geo3D. |
 | ⚙️ | **Streamlined config** | Key 3D settings pinned on top, the rest folded away. Edits saved with a `.bak`, kept across updates. |
 | 🧹 | **Clean uninstall** | Removes only the files the app installed (tracked per game). Your `game.exe` is never touched. |
 | 💾 | **Backup & restore** | Export / import all your settings, library and profiles as a single JSON file. |
+| 🟣 | **Self‑update** | A glowing **Check Updates** button up top queries the app's own GitHub and fetches a new build if there is one. |
 | 📴 | **Offline‑capable** | Bundled cores & fallbacks install even when a download source is unreachable. |
 
 ---
@@ -87,8 +88,10 @@ Launch the game. For head tracking, install a **6DOF** mod from the game's card 
 **🟦 Stereoscopic 3D**
 - **geo‑11** — DX11 geometry 3D
 - **Geo3D** (Flugan) — DX10/11/12
+- **Legacy Geo3D** — bundled, offline
 - **SuperDepth3D** — depth‑based, any API
 - **wiz3D** — DX9 & legacy
+- **3DVision4All** — Nvidia proxy, DX9/DX10
 
 </td><td valign="top">
 
@@ -97,6 +100,9 @@ Launch the game. For head tracking, install a **6DOF** mod from the game's card 
 - **GeoVrExport** → Geo3D
 - ships **`geod3d9.dll`** for native DX9
 - feeds **Katanga / VRScreenCap**
+
+**🎮 Compatibility**
+- **dgVoodoo2** — DX7/8/9/10 → DX11
 
 </td><td valign="top">
 
@@ -148,6 +154,12 @@ On a DX9 game, the manual install section shows an **optional ⛭ button** to se
 
 ---
 
+## 🟣 Keeping the app updated
+
+The **Check Updates** button (the glowing purple one, top‑right) checks this app's own [GitHub releases](https://github.com/BerZerker96/Stereo3D-6DOF-MANAGER/releases). If a newer build is published it shows you the version bump and release notes, then downloads the installer straight to your **Downloads** folder — just run it to update. If you're already current, it tells you so. Mod cores update separately via **Check updates** in the mod list, so the app and the mods it installs each stay fresh on their own.
+
+---
+
 ## 📄 Full documentation
 
 A complete **feature & technical reference** — every download method, install layout, the config editor, and the DX9 proxy in detail — is in **[`docs/Stereo3D-6DoF-Manager-Guide.pdf`](docs/Stereo3D-6DoF-Manager-Guide.pdf)**.
@@ -169,6 +181,7 @@ This manager stands on the shoulders of the stereoscopic‑3D & VR modding commu
 | **Katanga VR** | [bo3b](https://github.com/bo3b/katanga) |
 | **ReShade** | [crosire](https://reshade.me) |
 | **wiz3D** | effcol |
+| **3DVision4All** | [oneup03](https://github.com/oneup03/3DVision4All) |
 | **6DOF Head‑Tracking Hub** | [BerZerker96](https://github.com/BerZerker96) |
 | **6DOF per‑game mods** | [itsloopyo](https://github.com/itsloopyo) |
 | **dgVoodoo2** | [Dege](https://dege.freeweb.hu/) |
