@@ -1,3 +1,4 @@
+<img width="1584" height="672" alt="1784444271884" src="https://github.com/user-attachments/assets/5e5b2641-69e1-4fcf-b843-f95df9456d69" />
 <div align="center">
 
 # 🥽 Stereo 3D / 6DoF Manager
