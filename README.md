@@ -10,8 +10,8 @@
 <br/>
 
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)
-![APIs](https://img.shields.io/badge/APIs-DX9%20·%20DX10%20·%20DX11%20·%20DX12%20·%20Vulkan%20·%20OpenGL-1a6a7a)
-![Games](https://img.shields.io/badge/Game%20database-819%20titles-2a71a8)
+![APIs](https://img.shields.io/badge/APIs-DX7%20to%20DX12%20%7C%20Vulkan%20%7C%20OpenGL-1a6a7a)
+![Games](https://img.shields.io/badge/Game%20database-3335%20titles-2a71a8)
 ![Mods](https://img.shields.io/badge/Managed%20mods-17-0e7f93)
 ![Built with](https://img.shields.io/badge/Built%20with-Electron-47848F?logo=electron&logoColor=white)
 
@@ -37,7 +37,8 @@ Playing PC games in **stereoscopic 3D** or with **6DOF head tracking** usually m
 | 🔍 | **Drive scan** | Finds installed games and reads each one's render API + 32/64‑bit straight from the `.exe`. |
 | ⚡ | **One‑click setup** | Picks & installs the best 3D pipeline for the game's API and writes a working config. |
 | 🎚️ | **Manual install** | Install any single mod yourself, with the correct proxy & folder layout applied automatically. |
-| 🟨 | **API / bit override** | A yellow selector under the game title lets you correct detection; it sticks across rescans. |
+| 🟨 | **API / bit override** | A selector under the game title lets you correct detection; it sticks across rescans. |
+| ↺ | **Revert to auto-detect** | Overrode something by hand? One button re-reads the `.exe` headers and the game database and hands detection back to the app. |
 | 🖼️ | **Dynamic output picker** | The output list adapts to each mod's real formats (SBS, TAB, interlaced, checkerboard, VR…). |
 | 🎯 | **6DOF auto‑match** | Understands the game *name* and matches a BerZerker or itsloopyo head‑tracking mod. |
 | 🕹️ | **6DOF manual picker** | Pick **any** mod & version from either catalogue — including combined **3D + 6DOF** builds. |
@@ -46,7 +47,9 @@ Playing PC games in **stereoscopic 3D** or with **6DOF head tracking** usually m
 | ⚙️ | **Streamlined config** | Key 3D settings pinned on top, the rest folded away. Edits saved with a `.bak`, kept across updates. |
 | 🧹 | **Clean uninstall** | Removes only the files the app installed (tracked per game). Your `game.exe` is never touched. |
 | 💾 | **Backup & restore** | Export / import all your settings, library and profiles as a single JSON file. |
-| 🟣 | **Self‑update** | A glowing **Check Updates** button up top queries the app's own GitHub and fetches a new build if there is one. |
+| 🟣 | **Self‑update** | **Check app updates** (purple, far right) queries this app's own GitHub. The version you *can* move to shows on the badge — nothing is shown while you're current. |
+| ♻️ | **Adopts what's already there** | Mods you installed by hand are picked up automatically — one card per physical install, never two, and their missing settings are seeded without touching anything you tuned. |
+| ▶️ | **On from first launch** | SuperDepth3D and Geo3D are switched **on** in ReShade at install, with Geo3D's conversion already set to Frame-Sequential in → Side-by-Side out. The overlay opens on **Space**. |
 | 📴 | **Offline‑capable** | Bundled cores & fallbacks install even when a download source is unreachable. |
 
 ---
@@ -58,10 +61,10 @@ Playing PC games in **stereoscopic 3D** or with **6DOF head tracking** usually m
 ```
 
 ### ① Scan your drives
-Click **⟳ Scan all drives**. The app reads each game's API + bitness and matches its name against the built‑in database of **819 titles**.
+Click **⟳ Scan all drives**. The app reads each game's API + bitness and matches its name against the built‑in database of **3,335 titles** across 275 engines — DX7 through DX12, Vulkan and OpenGL.
 
 ### ② Pick a game
-Select any game. Its detected **API** and **bitness** show under the title in a 🟨 yellow selector — override them if a game was mis‑detected.
+Select any game. Its detected **API** and **bitness** show under the title — override them if a game was mis-detected, and press **↺ Auto-detect** to hand it back to the app.
 
 ### ③ One‑click setup
 Choose an **output format** and press the setup button. The app:
@@ -87,12 +90,13 @@ Launch the game. For head tracking, install a **6DOF** mod from the game's card 
 <tr><td valign="top">
 
 **🟦 Stereoscopic 3D**
-- **geo‑11** — DX11 geometry 3D
-- **Geo3D** (Flugan) — DX10/11/12
-- **Legacy Geo3D** — bundled, offline
+- **geo‑11** — DX11 geometry 3D, from HelixMod
+- **geo‑11 (mirror)** — same build, GitHub fallback
+- **Geo3D** (Flugan) — newest, manual
+- **Legacy Geo3D** — bundled stable, used by one‑click
 - **SuperDepth3D** — depth‑based, any API
-- **wiz3D** — DX9 & legacy
-- **3DVision4All** — Nvidia proxy, DX9/DX10
+- **wiz3D** — DX7–11, three build variants
+- **3DVision4All** — Nvidia proxy, DX9–12
 
 </td><td valign="top">
 
@@ -110,11 +114,41 @@ Launch the game. For head tracking, install a **6DOF** mod from the game's card 
 **🎯 6DOF head tracking**
 - **BerZerker hub** (per‑game)
 - **itsloopyo** (per‑game)
-- combined **3D + 6DOF** builds
+- every **version** a mod ships
+- ✦ combined **3D + 6DOF** builds
 - auto loader install
 
 </td></tr>
 </table>
+
+---
+
+## ⚙️ What an install actually configures
+
+Installing isn't just copying DLLs — the app leaves the game in a state you can launch straight into.
+
+**ReShade‑hosted mods** (SuperDepth3D, Geo3D, Legacy Geo3D) get the real ReShade host downloaded for the game's **API and bitness**, renamed to the proxy name that game actually loads (`dxgi.dll` for DX10/11/12, `d3d9.dll` for DX9, `opengl32.dll` for GL), with the shader and texture folders and a matching `ReShade.ini`. The host is shared: a second hosted mod reuses it instead of downloading again, and removing one leaves it in place for the other.
+
+Then the shader is **switched on**:
+
+| Mod | What's set at install |
+|---|---|
+| **SuperDepth3D** | Technique enabled in the preset — active on first launch, no overlay needed. |
+| **Geo3D / Legacy Geo3D** | `3DToElse` enabled, **input = Frame Sequential**, **output = Side‑by‑Side**. Pick a different output and your choice wins. |
+| **All of them** | ReShade overlay bound to **Space** instead of the default `Home`. |
+
+**3DVision4All** additionally needs `EnableWindowed3D.exe` run **once per game folder, elevated** — it writes the NVIDIA `StereoProfile` flags without which the driver won't activate stereo for the windowed swap chain the mod forces. The app prompts you and offers to run it.
+
+**Legacy Geo3D** ships its add‑ons and shader inside the app (no download), but the ReShade host it runs inside is fetched per game so it always matches the architecture.
+
+---
+
+## 🔒 Install safety
+
+- **One owner per file.** Two mods can ship the same payload. Exactly one is ever recorded as owning a given path, so removing either can't delete files the other still needs.
+- **Proxy & loader slots are exclusive.** `d3d9/11/12.dll`, `dxgi.dll`, `nvapi64.dll` and the loader slots (`dinput8`, `winmm`, `version`, `dsound`) can only have one owner. A second mod that wants an occupied slot is refused *by name*, never silently clobbered — except 3DVision4All, which is politely **moved** to a free loader slot when a 6DOF mod needs the one it's using.
+- **Nothing fails silently.** Every mod either installs or is refused with a stated reason.
+- **Your tuning survives updates**, including keys the app doesn't ship a default for.
 
 ---
 
@@ -132,6 +166,9 @@ Launch the game. For head tracking, install a **6DOF** mod from the game's card 
 | **Separation** | The 3D strength — how far apart the two eye viewpoints are. |
 | **Katanga / VRScreenCap** | VR viewer apps that display the full‑res SBS frame the export add‑ons share to them. |
 | **Core** | A shared cached download that multiple games link against (vs. a per‑game build). |
+| **Frame Sequential** | Alternating left/right frames — what geo‑11 and Geo3D hand to ReShade before `3DToElse` converts it. |
+| **Adopt** | Recording a mod that was already on disk into the app's manifest so it gets config, updates and clean removal. |
+| **Technique** | A named effect inside a ReShade shader file. It has to be in the preset's enabled list to actually run. |
 
 ---
 
@@ -155,9 +192,41 @@ On a DX9 game, the manual install section shows an **optional ⛭ button** to se
 
 ---
 
-## 🟣 Keeping the app updated
+## 🧭 The top bar
 
-The **Check Updates** button (the glowing purple one, top‑right) checks this app's own [GitHub releases](https://github.com/BerZerker96/Stereo3D-6DOF-MANAGER/releases). If a newer build is published it shows you the version bump and release notes, then downloads the installer straight to your **Downloads** folder — just run it to update. If you're already current, it tells you so. Mod cores update separately via **Check updates** in the mod list, so the app and the mods it installs each stay fresh on their own.
+Four compact buttons, left to right:
+
+| Button | What it checks |
+|---|---|
+| 📘 **Guide** | The in‑app quick‑start walkthrough. |
+| ▤ **Core library** | The shared download cache. Each mod's heavy files land here once and link into every game, so a second game installs instantly. Anything cached can always be **re‑downloaded** if it looks wrong. |
+| ⟲ **Check mod updates** | Every *mod's* releases. Updating a core re‑links every game using it — no per‑game re‑download. |
+| ⟲ **Check app updates** | This *app's* own [GitHub releases](https://github.com/BerZerker96/Stereo3D-6DOF-MANAGER/releases). |
+
+The installed version is deliberately **not** displayed. The only number you ever see is the release tag you can move up to — it appears on the purple badge when an update exists and disappears when you're current. Release notes and the version bump are shown before anything downloads, and the installer goes straight to your **Downloads** folder.
+
+The **app theme** lives in **Settings → Appearance** (ten dark variants plus a light mode).
+
+---
+
+## ♻️ Mods you already installed
+
+The app doesn't assume it put everything there. On every scan it reads what's physically on disk and **adopts** it, so hand‑installed mods get the same config editor, update checks and clean uninstall as ones it installed itself — but it never records files it didn't place, so removing an adopted mod leaves your own files alone.
+
+Two things it's careful about:
+
+- **One card per install.** Several mods ship the same files under two registry names — Geo3D has a bundled build and a latest build, geo‑11 has an official and a mirror. An ambiguous find resolves to **one**: the bundled Geo3D and the official geo‑11. A manifest that already listed both gets healed.
+- **Empty editors get seeded.** A pre‑installed mod that has never been run has no settings block yet — Geo3D writes its section into `ReShade.ini` at runtime. Adopting it fills in the missing keys only, so anything you already tuned is left exactly as it was, and a `.bak` is written.
+
+---
+
+## 🎯 6DOF head tracking
+
+Head‑tracking mods are **per game**, from two catalogues: the **BerZerker hub** (one release per game in a single repo) and **itsloopyo** (one repo per game). The app matches your game by name — handling acronyms, roman↔arabic numerals and sequel collisions — and installs the right build with the loader layout that release expects (ASI, BepInEx, MelonLoader or REFramework).
+
+The **manual picker** lists **every version** a mod ships, not just the newest: store variants (Steam / Epic / GamePass), build variants, and older releases, each labelled by whatever actually differs between them. A build tagged **✦ 3D + 6DOF** bundles the stereo mod too, so you don't need a separate one.
+
+Point your tracker at **UDP `127.0.0.1:4242`**.
 
 ---
 
@@ -166,6 +235,8 @@ The **Check Updates** button (the glowing purple one, top‑right) checks this a
 A complete **feature & technical reference** — every download method, install layout, the config editor, and the DX9 proxy in detail — is in **[`docs/Stereo3D-6DoF-Manager-Guide.pdf`](docs/Stereo3D-6DoF-Manager-Guide.pdf)**.
 
 Developers: build & architecture notes are in **[`DEVELOPER.md`](DEVELOPER.md)**.
+
+Every release is validated by an offline test suite covering the install engine end to end — every mod against every render API, every mod pair and triple in every install order, every output format, config round‑trips, update and download paths, and the full game database's exe↔folder correlation.
 
 ---
 
