@@ -49,6 +49,9 @@ Playing PC games in **stereoscopic 3D** or with **6DOF head tracking** usually m
 | 💾 | **Backup & restore** | Export / import all your settings, library and profiles as a single JSON file. |
 | 🟣 | **Self‑update** | **Check app updates** (purple, far right) queries this app's own GitHub. The version you *can* move to shows on the badge — nothing is shown while you're current. |
 | ♻️ | **Adopts what's already there** | Mods you installed by hand are picked up automatically — one card per physical install, never two, and their missing settings are seeded without touching anything you tuned. |
+| ▶️ | **Launch from the app** | A red **Play** button on each game starts it from its own folder, so mods and data paths resolve correctly. |
+| 🎨 | **Themes & backgrounds** | Ten themes plus 12 CSS background patterns (Blender grid, XMB waves, blueprint, carbon, topographic…) in **Settings → Appearance**. |
+| 📘 | **Three-page guide** | Setup, a colour-coded section for every mod with its real in-game hotkeys, and 6DOF fine-tuning tips. |
 | ▶️ | **On from first launch** | SuperDepth3D and Geo3D are switched **on** in ReShade at install, with Geo3D's conversion already set to Frame-Sequential in → Side-by-Side out. The overlay opens on **Space**. |
 | 📴 | **Offline‑capable** | Bundled cores & fallbacks install even when a download source is unreachable. |
 
@@ -77,7 +80,7 @@ Choose an **output format** and press the setup button. The app:
 Open **⚙ Config**. The settings that matter for 3D — **output, separation, convergence** — are pinned at the top; everything else is folded into an *Advanced* section.
 
 ### ⑤ Play (+ optional 6DOF)
-Launch the game. For head tracking, install a **6DOF** mod from the game's card (auto‑matched) or the manual picker, and point your tracker at **UDP `127.0.0.1:4242`**.
+Hit the red **▶ Play** button on the game panel — or launch it yourself. For head tracking, install a **6DOF** mod from the game's card (auto‑matched) or the manual picker, and point your tracker at **UDP `127.0.0.1:4242`**.
 
 > [!TIP]
 > Some config files only appear **after a game's first launch** (loaders like BepInEx create them on first run). The app shows sensible defaults until then.
@@ -205,7 +208,13 @@ Four compact buttons, left to right:
 
 The installed version is deliberately **not** displayed. The only number you ever see is the release tag you can move up to — it appears on the purple badge when an update exists and disappears when you're current. Release notes and the version bump are shown before anything downloads, and the installer goes straight to your **Downloads** folder.
 
-The **app theme** lives in **Settings → Appearance** (ten dark variants plus a light mode).
+The **app theme** and the **background pattern** live in **Settings → Appearance** — ten themes (nine dark, one light) and twelve CSS‑drawn patterns, all tinted to whichever theme you're on.
+
+---
+
+## 📘 The in‑app guide
+
+Three pages side by side: **getting started**, **the 3D mods**, and **6DOF head tracking**. Every mod gets its own colour‑coded section with the settings that matter and, where the mod has them, its **real in‑game hotkeys** — geo‑11 and Geo3D share the same `Ctrl+F3–F7` depth/convergence keys (both are 3Dmigoto/HelixMod derived), 3DVision4All uses the 3D Vision driver's `Ctrl+F3–F8`, wiz3D uses numpad bindings, and SuperDepth3D lives entirely in the ReShade overlay. Plus depth‑tuning tips for SuperDepth3D and fine‑tuning advice for head tracking.
 
 ---
 
