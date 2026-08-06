@@ -9,6 +9,9 @@
 
 <br/>
 
+<img width="2460" height="1707" alt="2026-08-06 17_32_00-" src="https://github.com/user-attachments/assets/d4e08e52-b965-4401-b274-9ea963835a3c" />
+
+
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)
 ![APIs](https://img.shields.io/badge/APIs-DX7%20to%20DX12%20%7C%20Vulkan%20%7C%20OpenGL-1a6a7a)
 ![Games](https://img.shields.io/badge/Game%20database-3335%20titles-2a71a8)
