@@ -1,0 +1,55 @@
+{
+  "name": "stereo3d-6dof-manager",
+  "version": "1.0.0",
+  "description": "Stereo 3D/6DoF Manager \u2014 stereoscopic-3D & 6DOF head-tracking mod manager for PC games",
+  "author": "BlueDepth",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack:dir": "electron-packager . \"Stereo 3D 6DoF Manager\" --platform=win32 --arch=x64 --out=dist --overwrite --app-version=1.0.0 --ignore=\"dist|/.git\"",
+    "dist": "node stamp-build.js && electron-builder --win --x64",
+    "dist:portable": "electron-builder --win portable --x64",
+    "stamp": "node stamp-build.js"
+  },
+  "build": {
+    "appId": "app.stereo3d6dofmanager",
+    "productName": "Stereo 3D 6DoF Manager",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "bundled/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "Stereo-3D-6DoF-Manager-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "**/node_modules/7zip-bin/**",
+      "bundled/**/*"
+    ],
+    "extraFiles": [
+      "update.bat"
+    ]
+  },
+  "dependencies": {
+    "7zip-min": "^1.4.5",
+    "adm-zip": "^0.5.18",
+    "node-unrar-js": "^2.0.2"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
