@@ -1489,6 +1489,14 @@ function coreOutdated(id){
   return have !== want;
 }
 function coresOutdated(){return MODS.filter(m=>coreOutdated(m.id)).length;}
+/* LATEST[] starts life as a mockup-era seed. In the real app it is overwritten with live data by
+ * checkUpdates() and refreshDetected(), but until that lands the seeded number is a guess - and it
+ * was being printed as though it were fact ("latest v0.6.56 on GitHub"). Anything not confirmed
+ * against the network renders as a dash instead of an invented version. */
+const VER_CONFIRMED = {};
+function markVerConfirmed(id, v){ if(v){ LATEST[id]=String(v).replace(/^v/i,''); VER_CONFIRMED[id]=true; } }
+function verLabel(id){ const v=LATEST[id]; return (VER_CONFIRMED[id] && v) ? ('v'+v) : '\u2014'; }
+window.markVerConfirmed=markVerConfirmed; window.verLabel=verLabel;
 
 function isManaged(i,id){return GAMES[i].inst.includes(id);}
 function isManual(i,id){return !isManaged(i,id)&&(GAMES[i].found||[]).includes(id);}
@@ -2284,9 +2292,9 @@ function drawInstall(b){
       :status==='update'?'<span class="pill update">UPDATE</span>'
       :status==='installed'?'<span class="pill installed">INSTALLED</span>'
       :'<span class="pill none">NOT INSTALLED</span>';
-    const ver=manual?`<div class="ver">detected on disk <b>v${IVER[sel+'|'+m.id]}</b> · latest <span class="up">v${LATEST[m.id]}</span></div>`
-      :installed?`<div class="ver">${upd?'<span class="up">⚠ outdated</span> · ':''}linked <b>v${IVER[sel+'|'+m.id]}</b>${upd?` → latest <span class="up">v${LATEST[m.id]}</span>`:` · current`}</div>`
-      :`<div class="ver">latest <b>v${LATEST[m.id]}</b> on GitHub</div>`;
+    const ver=manual?`<div class="ver">detected on disk <b>v${IVER[sel+'|'+m.id]}</b> · latest <span class="up">${verLabel(m.id)}</span></div>`
+      :installed?`<div class="ver">${upd?'<span class="up">⚠ outdated</span> · ':''}linked <b>v${IVER[sel+'|'+m.id]}</b>${upd?` → latest <span class="up">${verLabel(m.id)}</span>`:` · current`}</div>`
+      :`<div class="ver">latest <b>${verLabel(m.id)}</b> on GitHub</div>`;
     // core cache status (shared download) + per-game asset
     let assetsHtml='';
     if(c.ok&&!manual&&!m.guide){
@@ -2298,7 +2306,7 @@ function drawInstall(b){
         : !cc.cached
           ? `<span class="core-dl">downloads ${ASSET[m.id].size} once → /core</span>`
           : coreOutdated(m.id)
-            ? `<span class="core-out">cached v${cc.version}</span> <span class="l">(core update available v${LATEST[m.id]})</span>`
+            ? `<span class="core-out">cached v${cc.version}</span> <span class="l">(core update available ${verLabel(m.id)})</span>`
             : `<span class="core-ok">cached v${cc.version} ✓ no re-download</span>`;
       const perLine=per.length?per.join(', '):'<span class="l">none</span>';
       assetsHtml=`<div class="assets">
@@ -2318,7 +2326,7 @@ function drawInstall(b){
     if(manual){
       actBtn=`<button class="btn adopt" onclick="doAdopt('${m.id}')" data-tip="Bring this manual install under management: register its version, enable config editing &amp; updates."><span class="lbl">Manage this install</span><span class="prog">Adopting…</span></button>`;
     } else if(upd){
-      actBtn=`<button class="btn update" onclick="doInstall('${m.id}',true)" data-tip="This game's ${m.id} is outdated. Updates the shared core to v${LATEST[m.id]} and re-links every game using it."><span class="lbl">Update core → v${LATEST[m.id]}</span><span class="prog">Updating core…</span></button>`;
+      actBtn=`<button class="btn update" onclick="doInstall('${m.id}',true)" data-tip="This game's ${m.id} is outdated. Updates the shared core to ${verLabel(m.id)} and re-links every game using it."><span class="lbl">Update core → ${verLabel(m.id)}</span><span class="prog">Updating core…</span></button>`;
     } else if(m.guide){
       actBtn=`<button class="btn install" onclick="doInstall('${m.id}',false)" data-tip="Opens ${m.site||'the official site'} to download ${m.name}. Tap ❔ Help for the exact steps."><span class="lbl">Open download site ↗</span><span class="prog">Opening…</span></button>`;
     } else if(m.bundled){
@@ -2433,7 +2441,7 @@ function doInstall(id,isUpd){
   const hasPer=ASSET[id].per.length>0;
   if(isUpd){
     // updating a game's mod updates the shared core, then re-links every game using it
-    toast(`Updating ${nm} core → v${LATEST[id]} (re-links all games)…`);
+    toast(`Updating ${nm} core → ${verLabel(id)} (re-links all games)…`);
   } else if(!coreCached(id)){
     toast(`Downloading ${nm} core (${ASSET[id].size}) once → /core …`);
   } else {
@@ -2448,7 +2456,7 @@ function doInstall(id,isUpd){
     if(!isUpd)IVER[sel+'|'+id]=CORE[id].version; // game links to whatever core version is cached
     if(id==='dgvoodoo'){ensureStore();Object.assign(STORE[sel].dgvoodoo,{OutputAPI:'d3d11_fl11_0',dgVoodooWatermark:false,FastVideoMemoryAccess:true,Antialiasing:'appdriven'});} // auto-config for stereo: force D3D11 so geo-11/ReShade hook it
     const v=IVER[sel+'|'+id];
-    toast(isUpd?`${nm} core updated to v${LATEST[id]} — all games re-linked`
+    toast(isUpd?`${nm} core updated to ${verLabel(id)} — all games re-linked`
         : id==='dgvoodoo'?`dgVoodoo2 installed & auto-set to OutputAPI=d3d11_fl11_0 — ${g.api.join('/')} now reads as DX11`
         : coreOutdated(id)?`${nm} linked from core v${v} (core is behind — update it to refresh every game)`
         : `${nm} installed${hasPer?' + per-game fix':''} (v${v})`);
@@ -2531,8 +2539,8 @@ function renderCore(){
     const c=CORE[m.id];const used=gamesUsing(m.id);
     const state=!c.cached?'miss':coreOutdated(m.id)?'out':'ok';
     const stat=state==='miss'?'<span class="cstat miss">NOT CACHED</span>':state==='out'?'<span class="cstat out">UPDATE</span>':'<span class="cstat ok">CURRENT</span>';
-    const sub=!c.cached?`<span class="up">not downloaded</span> · latest v${LATEST[m.id]} · ${ASSET[m.id].size}`
-      :state==='out'?`cached <b>v${c.version}</b> → latest <span class="up">v${LATEST[m.id]}</span> · ${ASSET[m.id].size}`
+    const sub=!c.cached?`<span class="up">not downloaded</span> · latest ${verLabel(m.id)} · ${ASSET[m.id].size}`
+      :state==='out'?`cached <b>v${c.version}</b> → latest <span class="up">${verLabel(m.id)}</span> · ${ASSET[m.id].size}`
       :`cached <b>v${c.version}</b> · ${ASSET[m.id].size}`;
     const per=ASSET[m.id].per.length?ASSET[m.id].per.join(', '):'none (no per-game asset)';
     const btn=!c.cached?`<button class="core-btn dl" onclick="downloadCore('${m.id}')">Download core</button>`
@@ -2553,16 +2561,16 @@ function renderCore(){
 function downloadCore(id){
   const row=document.getElementById('core-'+id);row.classList.add('busy');
   toast(`Downloading ${MODS.find(m=>m.id===id).name} core (${ASSET[id].size}) — once for all games…`);
-  setTimeout(()=>{CORE[id]={cached:true,version:LATEST[id]};toast(`${MODS.find(m=>m.id===id).name} core cached v${LATEST[id]} — installs are now instant`);renderCore();refreshBadge();if(sel!==null)drawBody();render(activeList());},1500);
+  setTimeout(()=>{CORE[id]={cached:true,version:LATEST[id]};toast(`${MODS.find(m=>m.id===id).name} core cached ${verLabel(id)} — installs are now instant`);renderCore();refreshBadge();if(sel!==null)drawBody();render(activeList());},1500);
 }
 function updateCore(id){
   const row=document.getElementById('core-'+id);row.classList.add('busy');
-  toast(`Updating ${MODS.find(m=>m.id===id).name} core → v${LATEST[id]}…`);
+  toast(`Updating ${MODS.find(m=>m.id===id).name} core → ${verLabel(id)}…`);
   setTimeout(()=>{
     CORE[id].version=LATEST[id];
     let relinked=0;
     GAMES.forEach((g,i)=>{if(g.inst.includes(id)){IVER[i+'|'+id]=LATEST[id];relinked++;}}); // re-link every game at once
-    toast(`Core updated to v${LATEST[id]} — re-linked ${relinked} game(s), no re-download`);
+    toast(`Core updated to ${verLabel(id)} — re-linked ${relinked} game(s), no re-download`);
     renderCore();refreshBadge();if(sel!==null)drawBody();render(activeList());
   },1500);
 }
@@ -2640,7 +2648,7 @@ function drawConfig(b){
 }
 function genRaw(id,cur){
   const sc=getSchema(id);let out='';
-  out+=`<span class="cmt">; ${GAMES[sel].n} — ${GAMES[sel].api.join('/')} ${GAMES[sel].bit} — ${MODS.find(m=>m.id===id).name} v${LATEST[id]}</span>\n`;
+  out+=`<span class="cmt">; ${GAMES[sel].n} — ${GAMES[sel].api.join('/')} ${GAMES[sel].bit} — ${MODS.find(m=>m.id===id).name} ${verLabel(id)}</span>\n`;
   out+=`<span class="cmt">; source: ${MODS.find(m=>m.id===id).src}</span>\n\n`;
   if(sc.type==='xml'){
     out+=`<span class="tag">&lt;wiz3D profile="${GAMES[sel].exe}"&gt;</span>\n`;
@@ -3127,6 +3135,10 @@ render(activeList());refreshBadge();
   const S = window.stereo;
   const T = (m)=>{ try{ if(typeof toast==='function') toast(m); }catch(_){ } };
   const refresh = ()=>{ try{ if(typeof render==='function') render(typeof activeList==='function'?activeList():GAMES); if(typeof refreshBadge==='function') refreshBadge(); if(typeof drawBody==='function' && typeof sel!=='undefined' && sel!=null) drawBody(); }catch(_){ } };
+  /* openDetail() was called in two places but never defined anywhere, so both threw a ReferenceError
+   * and aborted their function part-way. One of them was the last line of "Remove all mods", which
+   * is why that button appeared to do nothing at all. selectGame() is the real re-open. */
+  if(typeof window.openDetail!=='function') window.openDetail = (i)=>{ try{ if(typeof selectGame==='function' && i!=null) selectGame(i); }catch(_){ } };
 
   /* ---- real .exe icons (replace the generated monograms) ---- */
   const origGicon = window.gicon;
@@ -3184,15 +3196,6 @@ render(activeList());refreshBadge();
      * Steam drive - which used to find zero games - left "Your library is empty" behind. Bail out
      * before touching GAMES and say what happened instead. */
     if(!r || !Array.isArray(r.games) || !r.games.length){
-      scanning=false; if(scanBar) scanBar.style.display='none';
-      T(opts.drive
-        ? ('No games found on '+opts.drive+' \u2014 your library is unchanged')
-        : 'No games found \u2014 your library is unchanged');
-      return;
-    }
-    /* A scan that found nothing must NEVER clear what is already there. The old code emptied GAMES
-     * before looking at the result, so one bad scan cost the whole library. */
-    if(!((r&&r.games)||[]).length){
       scanning=false; if(scanBar) scanBar.style.display='none';
       T(opts.drive
         ? ('No games found on '+opts.drive+' \u2014 your library is unchanged')
@@ -3450,33 +3453,40 @@ render(activeList());refreshBadge();
 
   /* Remove every mod the app installed for the selected game. Uninstalls one at a time so a single
      failure can't abort the rest, and reports exactly what came off. */
+  /* Remove every mod the app installed for this game.
+   *
+   * This used to loop here and call S.uninstall(id, g) with the ids held in g.inst - but g.inst
+   * holds the UI's CARD ids ('supervr', 'geovr'), while the manifest is keyed by registry ids
+   * ('supervrexport', 'geovrexport'). Those calls matched no record, the backend answered "nothing
+   * recorded" as ok:true, and the loop then hit an undefined openDetail() and threw. Nothing was
+   * deleted and nothing was reported. The whole operation now happens in the main process, against
+   * the manifest, which is the only thing that actually knows what was placed.
+   */
   window.uninstallAllMods = async function(){
     const g=GAMES[sel]; if(!g){ T('Pick a game first'); return; }
-    const list=(g.inst||[]).slice();
-    if(!list.length){ T('No mods are installed for this game'); return; }
-    const names=list.map(id=>{ const m=MODS.find(x=>x.id===id); return (m&&m.name)||id; });
-    const okGo = confirm('Remove all '+list.length+' mod'+(list.length>1?'s':'')+' from '+(g.n||g.folder)+'?\n\n'
-      + names.map(n=>'  \u2022 '+n).join('\n')
-      + '\n\nOnly files this app installed are deleted. Your game files are not touched.');
-    if(!okGo) return;
-    // Order matters: remove guests before their hosts. ReShade hosts SuperDepth3D/Geo3D and the VR
-    // export add-ons, so taking it off first would strand them; loaders come off last of all.
-    const RANK={ reshade:90, 'reshade-shaders':91, bepinex:95, asiloader:95, reframework:95, dgvoodoo:98 };
-    const order=list.slice().sort((a,b)=>(RANK[a]||10)-(RANK[b]||10));
-    const removed=[], failed=[];
-    for(const id of order){
-      let r=null;
-      try{ r=await S.uninstall(id, g); }catch(e){ r={ok:false,error:String(e)}; }
-      if(r&&r.ok!==false) removed.push(id); else failed.push(id+(r&&(r.note||r.error)?(' \u2014 '+(r.note||r.error)):''));
-    }
-    g.inst=(g.inst||[]).filter(id=>!removed.includes(id));
-    try{ await S.setLibrary(GAMES); }catch(_){ }
-    try{ await refreshDetected(sel); }catch(_){ }
-    render(activeList()); openDetail(sel);
-    T(failed.length ? ('Removed '+removed.length+', '+failed.length+' could not be removed')
-                    : ('Removed all '+removed.length+' mod'+(removed.length>1?'s':'')));
-    if(failed.length) console.warn('uninstall-all failures:', failed);
+    const payload=serializeGame(g,sel);
+    let recorded=[]; try{ const r=await S.installedMods(payload); recorded=(r&&r.mods)||[]; }catch(_){ }
+    if(!recorded.length){ T('No mods are recorded as installed for this game'); return; }
+    const names=recorded.map(m=>'  \u2022 '+m.name+(m.adopted?'  (installed by hand \u2014 will only be de-registered)':''));
+    if(!confirm('Remove all '+recorded.length+' mod'+(recorded.length>1?'s':'')+' from '+(g.n||g.folder)+'?\n\n'
+      + names.join('\n')
+      + '\n\nOnly files this app installed are deleted. Your game files are not touched.')) return;
+    T('Removing '+recorded.length+' mod'+(recorded.length>1?'s':'')+'\u2026');
+    let r=null; try{ r=await S.uninstallAll(payload); }catch(e){ r={ok:false,error:String(e)}; }
+    if(!r || (!r.ok && !(r.removed||[]).length)){ T('Could not remove the mods'+(r&&(r.error||r.note)?(' \u2014 '+(r.error||r.note)):'')); return; }
+    /* Re-derive from disk rather than trusting the in-memory list - that mismatch is what broke
+     * this in the first place. refreshDetected() re-reads the manifest and the folder. */
+    try{ await refreshDetected(sel,{adopt:false}); }catch(_){ g.inst=[]; g.found=[]; }
+    render(activeList()); if(typeof openDetail==='function') openDetail(sel);
+    persistLibrary();
+    const bits=[];
+    if((r.removed||[]).length) bits.push('removed '+r.removed.length+' mod'+(r.removed.length>1?'s':''));
+    if(r.files) bits.push(r.files+' file'+(r.files>1?'s':''));
+    T((r.failed&&r.failed.length) ? ('\u2716 '+bits.join(' \u00b7 ')+' \u2014 '+r.failed.length+' could not be removed')
+                                  : ('\u2716 '+(bits.join(' \u00b7 ')||'nothing to remove')));
+    if(r.failed&&r.failed.length) console.warn('uninstall-all failures:', r.failed);
   };
+
 
   /* The scanner grid is folded away by default - the one-line summary above it carries the two
      things that matter (API and the recommended mod). The choice sticks between games. */
@@ -3570,7 +3580,7 @@ render(activeList());refreshBadge();
     if(info){ if(info.api) g.api=info.api; if(info.bit) g.bit=info.bit; if(info.eng) g.eng=info.eng; }
     try{ await S.setLibrary(GAMES); }catch(_){ }
     try{ await refreshDetected(sel); }catch(_){ }
-    render(activeList()); openDetail(sel);
+    render(activeList()); if(typeof openDetail==='function') openDetail(sel);
     T('Now using '+g.exe+(g.api?(' \u00b7 '+g.api.join('/')):''));
   };
 
@@ -3810,21 +3820,36 @@ render(activeList());refreshBadge();
       ? ('Stop managing '+nm+' for "'+(g.folder||g.n)+'"?\n\nThis was installed by hand, so the app won\'t delete its files \u2014 it just removes it from management.')
       : ('Remove '+nm+' from "'+(g.folder||g.n)+'"?\n\nThis deletes the files the app installed for it next to the game. Your saved config is backed up (.bak). This can\'t be undone.');
     if(!confirm(msg)) return;
-    const payload={n:g.n,folder:g.folder,exe:g.exe,exePath:g.exePath,exeDir:g.exeDir,dir:g.dir};
+    const payload=serializeGame(g,sel);
     let res=null; try{ res=await S.uninstall(bidOf(id), payload); }catch(e){ res={ok:false,error:String(e)}; }
+    /* An id the manifest has never heard of now comes back ok:false + untracked, instead of a
+     * cheerful ok:true that removed the card while deleting nothing - after which the next folder
+     * rescan simply brought the mod back. Say what actually happened. */
+    if(res && res.untracked){
+      T('\u26a0 '+nm+' is not tracked as installed here \u2014 nothing was deleted');
+      if(res.note) setTimeout(()=>alert(res.note), 60);
+      try{ await refreshDetected(sel,{adopt:false}); }catch(_){ }
+      refresh(); return;
+    }
     if(res && res.ok){
-      g.inst=(g.inst||[]).filter(x=>x!==id);
-      g.found=(g.found||[]).filter(x=>x!==id);
-      // locked add-ons come off with their host
-      const locks={sd3d:'supervrexport',geo3d:'geovrexport'};
-      if(locks[id]){ g.inst=g.inst.filter(x=>x!==locks[id]); g.found=(g.found||[]).filter(x=>x!==locks[id]); }
-      const removed=(res.removed&&res.removed.length)?(' \u00b7 '+res.removed.length+' file(s)'):'';
-      T('\u2716 '+nm+' removed from '+(g.folder||g.n)+removed);
+      /* Re-derive the installed list from the manifest + disk instead of splicing the in-memory
+       * copy, so the UI can never drift from what is actually on the drive. */
+      try{ await refreshDetected(sel,{adopt:false}); }
+      catch(_){
+        g.inst=(g.inst||[]).filter(x=>x!==id);
+        g.found=(g.found||[]).filter(x=>x!==id);
+        const locks={sd3d:'supervr',geo3d:'geovr',geo3d_legacy:'geovr'};
+        if(locks[id]){ g.inst=g.inst.filter(x=>x!==locks[id]); g.found=(g.found||[]).filter(x=>x!==locks[id]); }
+      }
+      const extra = res.adopted ? ' \u00b7 de-registered (files left in place)'
+                  : (res.files ? (' \u00b7 '+res.files+' file'+(res.files>1?'s':'')+' deleted') : '');
+      T('\u2716 '+nm+' removed from '+(g.folder||g.n)+extra);
+      if(res.failed && res.failed.length) console.warn('uninstall: files that could not be deleted', res.failed);
       try{ if(gcGame===sel && typeof renderModDyn==='function') renderModDyn(id); }catch(_){ }
       refresh();
       if(window.persistLibrary) persistLibrary();
     } else {
-      T('Could not remove '+nm+(res&&res.error?(' \u2014 '+res.error):''));
+      T('Could not remove '+nm+(res&&(res.error||res.note)?(' \u2014 '+(res.error||res.note)):''));
     }
   };
 
@@ -4257,9 +4282,13 @@ render(activeList());refreshBadge();
 
   async function uninstallMod(id, g){
     if(!confirm('Uninstall '+id+' from '+g.n+'? This removes the files it placed (and any locked add-on).')) return;
-    const r=await S.uninstall(bidOf(id), g);
-    if(r&&r.ok){ (r.removed||[id]).forEach(x=>{ const i=g.inst.indexOf(x); if(i>=0) g.inst.splice(i,1); }); T((r.log&&r.log[0])||('Uninstalled '+id)); cfgMod=null; setTab&&setTab('mods'); refresh(); if(window.persistLibrary) persistLibrary(); }
-    else T('Uninstall failed: '+((r&&r.error)||'')); 
+    let r=null; try{ r=await S.uninstall(bidOf(id), serializeGame(g, GAMES.indexOf(g))); }catch(e){ r={ok:false,error:String(e)}; }
+    if(r&&r.untracked){ T('\u26a0 '+id+' is not tracked as installed here \u2014 nothing was deleted'); if(r.note) setTimeout(()=>alert(r.note),60); return; }
+    if(r&&r.ok){
+      try{ const i=GAMES.indexOf(g); if(i>=0) await refreshDetected(i,{adopt:false}); }
+      catch(_){ (r.removed||[id]).forEach(x=>{ const i=g.inst.indexOf(ridOf(x)); if(i>=0) g.inst.splice(i,1); }); }
+      T(r.note||('Uninstalled '+id)); cfgMod=null; setTab&&setTab('mods'); refresh(); if(window.persistLibrary) persistLibrary(); }
+    else T('Uninstall failed: '+((r&&(r.error||r.note))||'')); 
   }
   window.uninstallMod = uninstallMod;
 
@@ -4333,7 +4362,12 @@ render(activeList());refreshBadge();
   const origSelectGame = window.selectGame;
   window.selectGame = function(i){ origSelectGame.call(this,i); applyAmbient(GAMES[i]); refreshDetected(i); };
   // scan the files/ini/configs next to the exe and reflect which mods are actually installed
-  async function refreshDetected(i){
+  /* opts.adopt === false suppresses auto-adoption for this pass.
+   * That matters straight after an uninstall: a leftover signature on disk (a config the user wrote
+   * by hand, a file another mod still owns) would otherwise be re-adopted immediately and the mod
+   * would pop straight back into the list, making a successful removal look like it had failed. */
+  async function refreshDetected(i, opts){
+    opts = opts || {};
     const g=GAMES[i]; if(!g) return;
     if(!(window.stereo&&window.stereo.detectGame)) return;   // real app only
     const payload={n:g.n,folder:g.folder,exe:g.exe,exePath:g.exePath,exeDir:g.exeDir,dir:g.dir};
@@ -4341,7 +4375,7 @@ render(activeList());refreshBadge();
     if(!d) return;
     const backendFound=(d.found||[]);
     // AUTO-MANAGE: adopt anything found on disk into the manifest so it's treated as installed (config, updates)
-    if(backendFound.length){ try{ if(S.adoptMods) await S.adoptMods(payload, backendFound); }catch(_){ } }
+    if(opts.adopt!==false && backendFound.length){ try{ if(S.adoptMods) await S.adoptMods(payload, backendFound); }catch(_){ } }
     const known=id=>MODS.some(m=>m.id===ridOf(id));
     const allIds=[...new Set([...(d.managed||[]), ...backendFound].map(ridOf).filter(known))];
     const before=JSON.stringify((g.inst||[]).slice().sort());
@@ -4363,7 +4397,7 @@ render(activeList());refreshBadge();
             const id=ridOf(r.id); if(!known(id)) continue;
             const iv=r.installed?String(r.installed).replace(/^v/i,''):null;
             if(iv){ const k=i+'|'+id; if(IVER[k]!==iv){ IVER[k]=iv; verChanged=true; } }
-            if(r.latest){ const lv=String(r.latest).replace(/^v/i,''); if(LATEST[id]!==lv){ LATEST[id]=lv; verChanged=true; } }
+            if(r.latest){ const lv=String(r.latest).replace(/^v/i,''); if(LATEST[id]!==lv){ verChanged=true; } markVerConfirmed(id, lv); }
             if(r.adopted){ if(!g.found.includes(id)) g.found.push(id); }
             // BerZerker all-in-one 3D+6DOF: stereo is inside the head-tracking mod, so no separate 3D mod
             if(r.combo3d && (id==='track_bz'||id==='track_loop')){ if(!g.combo3d){ g.combo3d=true; verChanged=true; } }
@@ -4695,7 +4729,7 @@ function mountScanBtn(){
   window.startPeriodicUpdateCheck = startPeriodicUpdateCheck;
   async function autoRecheck(){
     let updates=0, limited=false;
-    try{ const rows=await S.checkUpdates(); if(Array.isArray(rows)){ rows.forEach(r=>{ const cid=(typeof ridOf==='function')?ridOf(r.id):r.id; if(r.update){ updates++; realLatest[cid]=r.latest; } if(r.rateLimited) limited=true; }); } }catch(_){ }
+    try{ const rows=await S.checkUpdates(); if(Array.isArray(rows)){ rows.forEach(r=>{ const cid=(typeof ridOf==='function')?ridOf(r.id):r.id; if(r.update){ updates++; realLatest[cid]=r.latest; } if(r.latest) markVerConfirmed(cid, r.latest); if(r.rateLimited) limited=true; }); } }catch(_){ }
     try{ const g=GAMES.filter(x=>((x.inst||[]).includes('track_bz')||(x.inst||[]).includes('track_loop'))); if(g.length){ const ht=await S.checkHeadTracking(g); if(Array.isArray(ht)){ ht.forEach(r=>{ if(r.update) updates++; if(r.rateLimited) limited=true; }); } } }catch(_){ }
     try{ await syncCore(); }catch(_){ }
     if(updates>0) T(updates+' update'+(updates>1?'s':'')+' available — see Mods & Core files');
@@ -4870,7 +4904,7 @@ function mountScanBtn(){
     document.body.classList.remove('checking');
     if(!r||!r.ok){ T('Update check failed: '+((r&&r.error)||'')); return; }
     let updates=0, limited=false;
-    r.rows.forEach(row=>{ const cid=ridOf(row.id); if(row.rateLimited) limited=true; if(row.latest){ realLatest[cid]=row.latest; LATEST[cid]=row.latest; } if(row.update) updates++; });
+    r.rows.forEach(row=>{ const cid=ridOf(row.id); if(row.rateLimited) limited=true; if(row.latest){ realLatest[cid]=row.latest; markVerConfirmed(cid, row.latest); } if(row.update) updates++; });
     await syncCore();
     if(typeof refreshUpdateBadges==='function') refreshUpdateBadges();
     render(activeList()); if(typeof openDetail==='function'&&sel!=null) openDetail(sel);
@@ -4925,8 +4959,8 @@ function mountScanBtn(){
       ['wiz3D', 'https://github.com/effcol/wiz3D', 'iZ3D-based wrapper: DX8\u2013DX11, OpenGL, HD3D, 3D Vision Direct'],
       ['3DVision4All \u2014 oneup03', 'https://github.com/oneup03/3DVision4All', 'Revives NVIDIA 3D Vision on modern drivers'] ]},
     { t:'VR export add-ons', items:[
-      ['SuperVrExport', 'https://github.com/BlueSkyDefender/SuperVrExport', 'Sends SuperDepth3D output to KatangaVR'],
-      ['GeoVrExport', 'https://github.com/Flugan/Geo3D-Installer', 'Sends Geo3D output to KatangaVR'],
+      ['SuperVrExport add-on', 'https://github.com/BerZerker96/Super-VRExport-Addon', 'Sends SuperDepth3D output to KatangaVR at full resolution'],
+      ['GeoVrExport add-on', 'https://github.com/BerZerker96/Super-VRExport-Addon', 'Sends Geo3D output to KatangaVR; ships geod3d9.dll for the native DX9 path'],
       ['KatangaVR', 'https://github.com/bo3b/Katanga', 'The VR viewer both add-ons target'] ]},
     { t:'Wrappers and tooling', items:[
       ['dgVoodoo2 \u2014 Dege', 'https://dege.freeweb.hu/dgVoodoo2/dgVoodoo2/', 'Legacy DirectX 1\u20139 and Glide onto D3D11/12'],
@@ -5233,7 +5267,7 @@ function mountScanBtn(){
       <div style="color:var(--ink);font-weight:700;margin:16px 0 8px">Startup &amp; storage</div>
       <div style="${rowCss}"><div style="flex:1"><div style="color:#fff;font-size:12px">Scan automatically on startup</div><div style="color:var(--ink-faint);font-size:11px">Off by default — the app starts with an empty library so it never freezes on launch. Use the <b>Scan</b> button when you want it.</div></div>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--ink);font-size:12px"><input type="checkbox" id="autoscan" ${st.autoScan?'checked':''}> on</label></div>
-      <div style="${rowCss}"><div style="flex:1;min-width:0"><div style="color:#fff;font-size:12px">Settings file</div><div style="color:var(--ink-faint);font-size:11px;word-break:break-all" id="cfgpath">\u2026</div><div style="color:var(--ink-faint);font-size:10px;margin-top:2px">Saved next to the app when that folder is writable (portable), otherwise in your user data folder.</div></div></div>
+      <div style="${rowCss}"><div style="flex:1;min-width:0"><div style="color:#fff;font-size:12px">Settings file</div><div style="color:var(--ink-faint);font-size:11px;word-break:break-all" id="cfgpath">\u2026</div><div style="color:var(--ink-faint);font-size:10px;margin-top:2px">Kept in your per-user app-data folder, alongside the cached mod cores — so an app update can never carry your library away with it. An older install beside the app is migrated here automatically.</div></div></div>
 
       <div style="color:var(--ink);font-weight:700;margin:16px 0 8px">Backup &amp; restore</div>
       <div style="${rowCss}"><div style="flex:1"><div style="color:#fff;font-size:12px">Export all settings &amp; library</div><div style="color:var(--ink-faint);font-size:11px">Saves one JSON file with every mod &amp; game config, your whole library, preferences and profiles \u2014 keep it as a backup or move it to another PC.</div></div>

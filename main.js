@@ -7,8 +7,8 @@ const installer = require('./src/installer');
 const logger = require('./src/logger');
 /* Stamped at package time from a hash of the source files. It is logged on every start and shown
  * in Settings, so "which build am I running" is answerable from a log line instead of guesswork. */
-const BUILD_ID = 'b70efc67';
-const BUILD_DATE = '2026-08-04 14:39';
+const BUILD_ID = '08f0109f';
+const BUILD_DATE = '2026-08-10 16:58';
 const peicon = require('./src/peicon');   // reads an exe's embedded icon from its PE resources
 
 /* ─────────────────────────── exhaustive IPC logging ───────────────────────────
@@ -390,6 +390,13 @@ ipcMain.handle('hubPooled', async () => { try { return installer.hubPooled(); } 
 ipcMain.handle('hubInstallInto', async (_e, game, tag) => { try { return installer.hubInstallInto(game, tag); } catch (e) { return { ok: false, error: String(e.message || e) }; } });
 ipcMain.handle('hubSuggest', async (_e, tags, games) => { try { const out = {}; for (const t of (tags || [])) out[t] = installer.suggestGameForTag(t, games || []); return out; } catch (e) { return {}; } });
 ipcMain.handle('uninstall', async (_e, modId, game) => { try { return installer.uninstall(modId, game); } catch (e) { return { ok: false, error: String(e.message || e) }; } });
+/* Remove every recorded mod for one game, in dependency order. Done in the main process because the
+ * manifest is the only authority on what was placed - the renderer used to loop over its own list of
+ * card ids, which matched no manifest record and deleted nothing while reporting success. */
+ipcMain.handle('uninstallAll', async (_e, game) => { try { return installer.uninstallAll(game); } catch (e) { return { ok: false, error: String(e.message || e) }; } });
+/* What the app actually records as installed for this game (the manifest), so the UI can show the
+ * truth rather than its own in-memory guess. */
+ipcMain.handle('installedMods', async (_e, game) => { try { return { ok: true, mods: installer.installedMods(game) }; } catch (e) { return { ok: false, error: String(e.message || e), mods: [] }; } });
 ipcMain.handle('readConfig', async (_e, modId, game) => { const file = installer.resolveConfigPath(MODS[modId], game); if (!file) return { exists: false, sections: {} }; return Object.assign({ file }, cfg.readConfig(file)); });
 ipcMain.handle('writeConfig', async (_e, modId, game, patch) => { const file = installer.resolveConfigPath(MODS[modId], game); if (!file) return { ok: false, error: 'no concrete config path' }; try { return cfg.writeConfig(file, patch); } catch (e) { return { ok: false, error: String(e.message || e) }; } });
 ipcMain.handle('list6dofMods', async () => { try { const [loop, bz] = await Promise.all([installer.loopAllMods(), installer.bzHubGames('BerZerker96/6DOF-Head-Tracking-Mods-Hub')]); return { loop, berzerker: bz, hubRepo:'BerZerker96/6DOF-Head-Tracking-Mods-Hub' }; } catch (e) { return { loop:[], berzerker:[] }; } });

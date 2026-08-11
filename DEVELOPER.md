@@ -1,165 +1,241 @@
-# Stereo 3D/6DoF Manager (desktop app)
+# Stereo 3D / 6DoF Manager — developer notes
 
-A real Electron desktop application for managing stereoscopic-3D mods on PC games.
-The UI is the exact Stereo 3D/6DoF Manager mockup; the difference is that every action is now
-wired to a real Node backend that touches your actual drives and files.
+Build `08f0109f`. Electron 31, Windows x64.
 
-## What's real
+> **This file was substantially rewritten on 2026-08-10.** The previous version had drifted badly
+> from the code — it claimed wiz3D and 3DVision4All had been removed (both are live), that loaders
+> are never auto-installed (they are), that ReShade is installed by launching its setup `.exe` (it is
+> a placed core), and that settings live next to the executable (they moved to the per-user data
+> folder). Everything below is checked against the current source.
 
-| Action | Real behavior |
+---
+
+## Architecture
+
+A standard two-process Electron app. All privileged work — filesystem, HTTPS, archive extraction, PE
+parsing, process launch — happens in the main process. The renderer is a single HTML document with
+no Node integration, reaching main only through an explicitly enumerated preload bridge.
+
+| Process | Owns | Never does |
+|---|---|---|
+| Main | Filesystem, HTTPS, extraction, PE parsing, launch, logging, settings | Renders UI |
+| Preload | A fixed list of **101** channel bindings; context isolation on | Exposes `require`, `fs` or arbitrary IPC |
+| Renderer | All presentation and interaction | Touches the filesystem or network directly |
+
+The bridge is exact: **101 handlers registered, 101 invocations exposed**. The smoke suite asserts
+that symmetry, so a handler added without a binding fails the build rather than becoming a silent
+no-op at runtime.
+
+### Source layout
+
+```
+main.js                 Window lifecycle, 101 IPC handlers, icon resolution, process launch
+preload.js              The context bridge — the complete list of what the UI may ask for
+renderer/index.html     The entire interface: markup, styling and logic in one document
+src/installer.js        Download, extraction, placement, configuration, conflicts, uninstall
+src/scanner.js          Drives, Steam libraries, executable ranking, API + bitness detection
+src/peimports.js        PE import-directory parser (classic + delay-load) — drives API detection
+src/peicon.js           PE resource parsing, to read an icon out of an executable
+src/mods.js             The catalogue: 17 mods, their sources, placement rules and API support
+src/gamedb.js + ext     3,335 known titles with engine, API and bitness hints
+src/ghfree.js           GitHub access that does not depend on the rate-limited API
+src/config.js           INI, XML and ReShade-preset reading and writing
+src/store.js            Settings, profiles and library persistence
+src/logger.js           Two rotating logs beside the executable
+harness/                Offline test suites (see below)
+```
+
+### The renderer is two layers
+
+`renderer/index.html` contains the original in-memory **mockup** (hardcoded games, catalogues and
+version tables) followed by an **integration layer** gated on:
+
+```js
+if (!(window.stereo && window.stereo.isReal)) return;
+```
+
+Inside the desktop app that gate opens and ~100 globals are replaced with real backend calls. Opened
+as a plain `.html` in a browser the mockup runs instead, so the same file serves both. When editing
+the renderer, check which layer you are in — a function defined in the mockup may be overridden later.
+
+---
+
+## Runtime locations
+
+| Path | Contents | Survives update |
+|---|---|---|
+| `%APPDATA%\Stereo3D Manager\` | `settings.json`, `library.json`, `profiles.json` | Yes |
+| `…\core\` | Cached mod payloads, one folder per source and version | Yes |
+| `…\cache\github\` | Cached release metadata, ten-minute TTL | Yes |
+| `<app>\logs\` | `app.log`, `download.log`, `update.log` | Yes — excluded from the update copy |
+| `<app>\manual-core\` | Manually supplied mod packages | Yes — excluded from the update copy |
+| `<game>\.stereoscope\manifest.json` | What this app installed into that game | Lives with the game |
+
+**Settings are not portable.** They used to be written next to the executable — precisely the folder
+an update replaces — so updating destroyed the user's library. They now live in the per-user data
+folder alongside the mod cache. An older install is migrated once, automatically, and the original is
+kept with a `.migrated` suffix.
+
+---
+
+## Render-API detection
+
+Detection reads the executable's real **PE import directory** — classic *and* delay-load — rather
+than scanning the file for byte sequences. This models what ReShade does at runtime: hook the loader
+and see which graphics entry point is actually called.
+
+Evidence is scored. An imported function unique to one API (4) beats a direct DLL import (3), which
+ties with a delay-load import (3), which beats an engine-runtime import or the Agility SDK (2), which
+beats a sibling file or an exe-name hint (1). `dxgi.dll` scores **nothing** — DX10, DX11 and DX12 all
+import it — and only resolves to DX11 when no stronger evidence exists anywhere.
+
+Full rationale, the evidence table and the exclusion rules: **[`docs/API-Detection.md`](docs/API-Detection.md)**.
+
+**The game database overrides detection.** In `inspectGame()` a database match replaces the detected
+API. This is deliberate: a remaster can change renderer without changing imports, and a single
+executable can ship both a DX11 and a DX12 path. The user can override either, and the override is
+remembered; **↺ Auto-detect** re-runs PE detection and the database lookup together.
+
+---
+
+## Install and uninstall
+
+### Install
+
+```
+resolve the source     catalogue entry, manual-core, or the exact build the user picked
+  -> ensure the core   manual-core, then disk cache, then download
+  -> verify            magic bytes: PK, 7z, Rar!
+  -> extract           wrapper folders unwrapped
+  -> check the slot    refuse or rehome on proxy contention
+  -> preflight         writable? at least 64 MB free?
+  -> place             per-mod rules, relative to the executable
+  -> verify each write size check, to detect antivirus quarantine
+  -> claim files       exactly one mod owns each path
+  -> seed config       defaults, without overwriting user values
+  -> record            the manifest: the exact file list
+```
+
+Hosts declared in `needs` (ReShade) are installed first and are **not** removed with their guest.
+Add-ons declared in `requires` are recorded with `lockedBy` and **are** removed with their host.
+
+### Uninstall
+
+The manifest is the only authority. `installer.uninstall(modId, game)` returns one of three outcomes:
+
+| Outcome | Meaning |
 |---|---|
-| **Scan** | Enumerates drives, reads Steam's `libraryfolders.vdf`, lists `steamapps/common/*` plus your extra scan folders, detects **bitness from the PE header** + best-effort API/engine, and pulls the real `.exe` icon. |
-| **Open folder** | Opens the game's install folder in Explorer. |
-| **Add game .exe** | Native file picker; reads bitness/API/engine from the chosen `.exe`. |
-| **Core library** | A **real on-disk cache** at `<userData>/core/<mod>@<tag>/`. The Core drawer and Mods page show exactly what's cached and how big. |
-| **Download / Update core** | Fetches the latest GitHub release, **streams download progress** (live bar, bottom-left), extracts to the cache, re-links games. A second game reuses the cache — no re-download. |
-| **Check updates** | Queries the GitHub Releases API for every mod, compares tags to cache. Add a token in Settings to raise the rate limit. |
-| **Install / pipeline** | Caches the release, copies payload + proxy DLL into the game folder, writes a default config, records a manifest for detection/uninstall. |
-| **Config editor** | Reads/writes the **real** `.ini`/`.conf`/`preset` files, preserving comments + unknown keys, atomic write + `.bak`. |
-| **Mods / Profiles / Settings tabs** | Real pages: mod catalog with cache/version, saved config profiles (`profiles.json`), and scan-folder + token + data-folder management. |
+| `{ ok: true, adopted: false, files: n }` | Recorded files deleted, record removed |
+| `{ ok: true, adopted: true }` | Registered but hand-installed — record removed, **nothing deleted** |
+| `{ ok: false, untracked: true, note }` | Nothing recorded for this id; says so instead of faking success |
 
-### Core downloads
+`installer.uninstallAll(game)` removes everything recorded for a game in dependency order (guests
+before hosts; loaders and converters last), independently per mod, returning `{ removed, files, failed }`.
 
-The **Mods** page (and the Core drawer) list every core package and a **Download all core files** button. Methods per source:
+`installer.installedMods(game)` returns what the manifest records, so the UI can show the truth
+rather than its own in-memory guess.
 
-- **GitHub release**: **wiz3D** (universal iZ3D-based wrapper), geo-11, Geo3D, **SuperVRExport** + **GeoVRExport** (distinct assets from the same repo), Osiris VR Viewer.
+> **Do not** iterate the renderer's `g.inst` and call `uninstall` per id. That list holds UI *card*
+> ids (`supervr`, `geovr`) while the manifest is keyed by *registry* ids (`supervrexport`,
+> `geovrexport`). That mismatch is what made "Remove all mods" delete nothing while reporting
+> success. Use `uninstallAll`, or map through `bidOf()`.
 
-### wiz3D wrapper (legacy DX7-9 / AMD HD3D / 3D Vision)
+> After any removal, refresh with `refreshDetected(i, { adopt: false })`. The default path
+> auto-adopts anything found on disk, which would immediately re-adopt a leftover signature and make
+> a successful removal look like it had failed.
 
-wiz3D is downloaded from `effcol/wiz3D`; the app copies the build matching the game's **API + bitness** (`dx9/x86`, `dx8`, `hd3d`, `opengl-quad-buffer-stereo`, …) next to the exe and writes the output method into `wiz3D_Config.xml`. For VR it defaults to **Interlaced** (full-res per eye); you can switch to **Checkerboard / DLP-Link**, SBS, Anaglyph, Shutter, or SR Weave from the wiz3D config editor. It's the recommended path for native DX7-9, HD3D and 3D-Vision-ready titles (no dgVoodoo2 conversion needed).
+---
 
-### Loader / proxy-DLL rename
+## Testing
 
-When a proxy/loader DLL (wiz3D's `d3d9.dll`, an ASI loader's `dinput8.dll`, BepInEx's `winhttp.dll`, …) is detected next to the exe, a **Loader / proxy DLL** panel appears (in the install tab and in the wiz3D / head-tracking config editors). If the DLL doesn't inject, rename it to another search-order name — **dinput8 / version / winmm** first, then dxgi, xinput, d3d11, winhttp, binkw*. Existing targets are backed up and the manifest is kept in sync.
-- **GitHub repo** (codeload, unit-tested): SuperDepth3D/Depth3D and the ReShade shader collection.
+```bash
+bash harness/validate.sh       # all suites — 715 assertions
+node harness/smoke.js          # structure, IPC symmetry, registry, links, undefined globals
+node harness/apidetect.js      # API detection against real synthetic PE images
+node harness/uninstall.js      # install/uninstall lifecycle and per-game tracking
+node harness/matrix.js         # every mod x every engine layout, and every output format
+node harness/conflicts.js      # proxy slots, install order, ownership, uninstall permutations
+node harness/configs.js        # config round-trips, unknown keys, seeding without overwriting
+node harness/wiring.js         # renderer -> preload -> main wiring for both uninstall paths
+node harness/uninstall-e2e.js  # uninstall through the renderer's OWN payload contract
+node harness/apicompare.js     # old vs new API detector, head to head (57% -> 100%)
+```
 
-### Head-tracking (two real per-game sources)
+| Suite | Checks |
+|---|---:|
+| smoke | 94 |
+| apidetect | 22 |
+| uninstall | 41 |
+| matrix | 346 |
+| conflicts | 110 |
+| configs | 33 |
+| wiring | 27 |
+| uninstall-e2e | 42 |
 
-Both head-tracking hubs are matched to the specific game and downloaded, then the mod is installed next to the real exe (DLLs in `BepInEx/plugins/` for Unity, `Mods/` for MelonLoader, or a `.asi` next to the exe for native). The **loader** each mod needs — **BepInEx** (Unity), **Ultimate ASI Loader** (native), or **REFramework** (RE Engine) — is **not auto-installed**; the app notes which one to install and links its download page, so you set it up once into the game folder. The mod reads head pose over UDP `127.0.0.1:4242` from whatever head-tracking app you choose to run.
+No suite touches the network or a real game folder. `harness/uninstall.js` drives the real installer
+against a sandboxed folder using the `manual-core` mechanism, which is also what makes the download
+path testable offline.
 
-- **itsloopyo** — per-game repositories at `github.com/itsloopyo/<game>-headtracking`; the manager resolves the game's repo (handling short names like `obra-dinn`) and downloads its release. DLLs land in `BepInEx/plugins/` (Unity), `Mods/` (MelonLoader), or as a `.asi` next to the exe (native).
-- **BerZerker96 6DOF Hub** — a single repo (`6DOF-Head-Tracking-Mods-Hub`) with **one release per game**; the manager lists the releases, matches your game (distinguishing e.g. *Subnautica* from *Subnautica 2*), and downloads that release's asset.
+`harness/pebuild.js` writes genuinely valid PE32 / PE32+ images with a chosen import table. Because
+detection now reads the real import directory, fixtures built from strings would test exactly the
+thing that used to be broken.
 
-The config is identified per game: `BepInEx/config/com.cameraunlock.<game>.headtracking.cfg` (Unity) or `HeadTracking.ini` next to the exe. If a game has no published release on a source (or you're rate-limited), the install opens that source's page (and notes the Nexus fallback) instead of failing.
-- **Installer (download + launch)**: **ReShade** — the app downloads the latest official setup tool **with full add-on support** (`ReShade_Setup_<ver>_Addon.exe`) into `/core` and launches it; you point it at the game `.exe`, choose the render API, and tick the add-on shaders.
-- **Guided (official site)**: **dgVoodoo2** opens dege.freeweb.hu and **HelixMod** per-game fixes open the HelixMod blog — these have their own interactive installers, so the app opens the site and shows the setup steps via the **❔ Help** button.
+The smoke suite asserts **no renderer function is called that is never defined**. That check exists
+because `openDetail()` was called in two places and defined in none — one of them the last line of
+"Remove all mods", which threw after doing the work but before reporting it.
 
-The stereo paths the app installs for you are **geo-11**, **SuperDepth3D** (+SuperVRExport) and **Geo3D** (+GeoVRExport). (wiz3D and 3DVision4All were removed to keep the set focused.)
+---
 
-### ReShade host prerequisite
+## Adding a mod
 
-`SuperDepth3D`, `Geo3D` and `Legacy Geo3D` all run *inside* ReShade, so they declare `needs: ['reshade']`.
-Installing any of them now installs the real host first: the ReShade DLL matching the game's **API and
-bitness**, renamed to the proxy name that game actually loads (`dxgi.dll` for DX10/11/12, `d3d9.dll` for
-DX9, `opengl32.dll` for GL), plus `reshade-shaders/Shaders` + `Textures` and a `ReShade.ini` pointing at
-them. The host is recorded as its own manifest entry, so a second hosted mod reuses it rather than
-re-downloading, and uninstalling one mod leaves the host in place for the other. If ReShade can't be
-fetched, the mod still installs and the app returns guidance instead of failing.
+- Add an entry to `src/mods.js`: name, source strategy, placement rules, supported APIs, config file.
+- Add a `CORE_SOURCES` entry if it needs a shared download, with its discovery strategy.
+- Add its config sections to `MOD_SECTIONS` in the installer, and a `modSectionFile()` case if the
+  file is not beside the executable.
+- Run `bash harness/validate.sh`.
 
-Legacy Geo3D used to ship a 32-bit `ReShade32.dll` inside the bundle. It was copied under that literal
-name, which no game loads, and it was the wrong architecture for 64-bit titles — so it never worked. The
-bundle now carries only the Geo3D payload (add-ons, the SBS shader, the DXIL compiler) and the host is
-downloaded per game.
+## Where to be careful
 
-### Locked add-ons & placement
+- **Widening a blocklist.** Always assert in both directions; the false-positive half matters more.
+- **Blanket string replacement in the installer.** Check the surrounding structure, not just the
+  matched text. Two bugs came from this, most recently an `apiOverrideNote` spread pasted into
+  functions where that variable does not exist.
+- **Adding UI that references state.** An undefined global inside a render function kills the whole
+  page silently and presents as a routing bug. The smoke suite now asserts none exist.
+- **Changing `MOD_API`.** Verify every API still has at least one route; Vulkan has exactly one
+  (SuperDepth3D), and the smoke suite asserts it.
+- **Changing the manifest format.** It is the only record of what may safely be deleted from a user's
+  game folder.
+- **Writing config defaults.** `DEFAULTS[modId]` must *seed* only the keys that are absent. Writing
+  the whole block replaces values the user has already tuned — which is what it used to do.
 
-- **SuperDepth3D** automatically pulls and installs **SuperVRExport**; **Geo3D** pulls **GeoVRExport** — these add-ons are locked to their mod and are removed with it.
-- Files are placed correctly per mod: SuperDepth3D shaders into `reshade-shaders\Shaders`, geo-11/Geo3D next to the real `.exe` (for Unreal that's inside `Binaries\Win64`), add-on `.addon64` next to the `.exe`.
-- **geo-11** is configured for **`direct_mode = katanga_vr`** (full-res SBS to Osiris) and offers a one-click **HelixMod** link to grab the per-game shader fix.
+---
 
-### One-click setup & Help
-
-- **Set up 3D** runs the chosen path: **geo-11** is fully automatic (installs the driver + KatangaVR config); **SuperDepth3D** and **Geo3D** install their shaders/add-ons and launch the ReShade add-on setup tool for the host install.
-- The **❔ Help** button beside *One-click setup* opens an in-app guide explaining SuperDepth3D, geo-11 and Geo3D, plus how to install ReShade, dgVoodoo2 and HelixMod fixes.
-
-### Managing installs
-
-- **Uninstall** button in each mod's config editor reverts that mod (and its locked add-on) using the recorded manifest.
-- **Auto-detection** adopts pre-installed mods on scan (ReShade, dgVoodoo2, geo-11, SuperDepth3D, Geo3D, head-tracking) so the app can manage them.
-- **Right-click a game** → *Open file location*.
-
-### Scanning & startup
-
-The app **starts with an empty library and never scans automatically**, so it always opens instantly. Press **🔍 Scan** (top bar or the empty-library prompt) to scan your drives and Steam libraries, or **add games manually**. Scanning runs in the background with a **top progress bar** and yields between games so the UI never freezes. Manually-added games are remembered across launches; scanned games are not. You can flip on *Scan on startup* in Settings if you prefer.
-
-### Portable, auto-saved settings
-
-Every setting — theme, **window size/position**, scan folders, core location, GitHub token, excluded games, head-tracking preferences — is saved automatically to `settings.json`. When the app's own folder is writable (a portable build) the file lives **next to the app**; otherwise it falls back to your user-data folder. Settings persist across restarts with no Save button.
-
-### Real exe detection & mod placement
-
-The scanner finds the **real game executable** the GPU driver loads — not a thin launcher — using researched per-engine layouts, so injected DLLs (ReShade, geo-11, proxies) and `reshade-shaders/` land in the folder that actually loads them. Coverage:
-
-- **Unreal 4/5** → `<Game>/<Project>/Binaries/Win64/<Name>(-Win64-Shipping).exe` (the root `.exe` is just a loader; the real name isn't always `-Shipping`, e.g. `Hotta/Binaries/Win64/QRSL.exe`). `Engine/Binaries/Win64/UE4Game.exe` is used for blueprint-only games, and `CrashReportClient.exe`/prereq/anti-cheat exes are skipped.
-- **REDengine** (Witcher 3, Cyberpunk 2077) → `bin/x64/…exe` (and `bin/x64_dx12`).
-- **CryEngine** → `Bin/Win64/…exe`. **Source 1** → root launcher + `bin/`. **Source 2** → `game/bin/win64/`.
-- **Unity / Creation (Bethesda) / RE Engine / id Tech / Frostbite / older DX8–9 games** → the executable at the game root.
-
-Mods install **next to that exe** (for Unreal that's inside `Binaries/Win64`), and the per-game `.stereoscope/manifest.json` lives there too. The picker prefers the deep engine binary over a root stub, and tool/uninstaller/redist folders are ignored.
-
-### Everything is saved automatically
-
-Your **library** (scanned + manually-added games), each game's **installed mods**, edited **config snapshots**, plus all **settings** (theme, window size, scan folders, core location, etc.) are written to disk automatically on every change, and restored on the next launch — no rescan needed. There's also a cyan **💾 Save** button next to the theme picker to force an immediate save whenever you want the reassurance.
-
-### Editing the head-tracking config in-app
-
-Click **⚙ Config** on a game's installed head-tracking mod and the app finds its ini next to the `.exe` (`HeadTracking.ini`, or the matching `BepInEx/config/*.headtracking.cfg` for Unity), reads it, and shows every key as an editable field. **Save** writes the file back in place (with a `.bak` backup); if no file exists yet, the editor shows sensible defaults and creates it on save. There's also an **Open file location** button.
-
-> Honest scope: download/extract/placement/config/manifest are real and tested on the
-> config layer. Per-mod upstream asset layouts vary, so asset matchers are best-effort and
-> the per-game `.stereoscope/manifest.json` lets you review or roll back. `ReShade` and
-> `dgVoodoo2` ship from their own sites (not GitHub releases); the app configures them in
-> place once their binaries are present and links out to the official download.
-
-## Run it (development)
+## Building
 
 ```bash
 npm install
-npm start
+node stamp-build.js       # refresh the build fingerprint
+npm run dist              # package (runs the stamp automatically)
 ```
 
-## Build a Windows .exe
+`npm run pack:dir` produces a portable folder and needs no Wine on Linux. `npm run dist` uses
+electron-builder and wants Windows (or Wine) for icons and signing.
 
-**Easiest:** double-click **`build.bat`** — it checks Node, runs `npm install`, lets you
-pick a portable or installer build, and opens the `dist` folder when done.
+### Release checklist
 
-Or run the steps manually:
+- `bash harness/validate.sh` — all suites pass.
+- `node stamp-build.js` and confirm the fingerprint changed.
+- Verify the packaged zip has `update.bat` beside the executable, not inside the asar.
+- Launch, open Settings, confirm the build fingerprint matches.
+- Scan one drive and confirm the library merges rather than replaces.
+- Install a mod, then **Remove all mods**, and confirm the game folder returns to its prior state.
 
-**A. Portable folder (no installer, simplest, no Wine needed):**
-```bash
-npm run pack:dir
-# → dist/Stereo 3D 6DoF Manager-win32-x64/Stereo 3D 6DoF Manager.exe   (double-click to run)
-```
+---
 
-**B. Installer + portable .exe via electron-builder (run on Windows for signing/icons):**
-```bash
-npm run dist
-# → dist/Stereo-3D-6DoF-Manager-1.0.0-x64.exe (NSIS installer)  and a portable .exe
-```
+## Safety
 
-> electron-builder embeds icons/metadata with tools that want Windows (or Wine on Linux).
-> Building on Windows is the smooth path. The portable folder in option A builds anywhere.
-
-## Project layout
-
-```
-main.js            Electron main process + IPC handlers (the real operations)
-preload.js         contextBridge → window.stereo (safe renderer API)
-renderer/index.html  the UI (identical to the mockup) + a thin integration layer
-src/scanner.js     drives, Steam libraries, PE bitness, API/engine heuristics
-src/config.js      INI/conf read-write that preserves unknown keys (+ .bak, atomic)
-src/mods.js        the mod registry (sources, proxy DLLs, config files, strategy)
-src/installer.js   GitHub release lookup, download, extract, placement, manifest
-```
-
-The renderer detects `window.stereo`. Inside the app it routes to the backend; opened as a
-plain `.html` in a browser it falls back to the original in-memory mockup, so the same file
-serves both.
-
-## Notes / safety
-
-- All wrappers and ASI/add-on builds are **single-player only** — do not use on
-  anti-cheat-protected multiplayer.
+- All wrappers and ASI/add-on builds are **single-player only** — never on anti-cheat multiplayer.
 - The config writer always backs up to `<file>.bak` before changing anything.
 - Uninstall removes exactly the files recorded in the manifest.
 

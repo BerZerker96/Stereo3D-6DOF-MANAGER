@@ -3156,7 +3156,11 @@ async function _installInner(modId, game, onProgress, opts) {
   // updating (or re-installing) over an existing copy → keep the user's tuned config values
   const isUpdate = !!(m.mods && m.mods[modId]);
   const prevTag = isUpdate ? m.mods[modId].tag : null;
-  const keepCfg = (opts.preserveConfig === false) ? [] : (isUpdate ? snapshotModConfig(game, modId) : []);
+  /* Snapshot the user's tuning before anything is placed - on EVERY install, not only on an update.
+   * A config file can already exist because the user installed the mod by hand and tuned it; a first
+   * install through the app would then overwrite it with the author's shipped file and the tuning was
+   * gone. snapshotModConfig() returns [] when there is nothing there, so this is free otherwise. */
+  const keepCfg = (opts.preserveConfig === false) ? [] : snapshotModConfig(game, modId);
 
   // guided installs (ReShade, dgVoodoo2, the 6DOF hub) — open the official source, don't place files
   if (mod.guide) {
@@ -3194,7 +3198,7 @@ async function _installInner(modId, game, onProgress, opts) {
     writeManifest(game, m);
     const kept = restoreModConfig(game, modId, keepCfg);
     return { ok: true, tag: core.tag, files: r.files, kept,
-      log: [ ...(typeof apiOverrideNote !== "undefined" && apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), 'ReShade ' + core.tag + ' \u2192 ' + r.dll + '  (' + r.api + ' ' + r.bit + ')',
+      log: [ ...(apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), 'ReShade ' + core.tag + ' \u2192 ' + r.dll + '  (' + r.api + ' ' + r.bit + ')',
             r.shaders ? 'shaders + textures \u2192 reshade-shaders\\' : 'shaders skipped (offline)',
             'ReShade.ini + ' + r.preset + ' written'] };
   }
@@ -3202,7 +3206,7 @@ async function _installInner(modId, game, onProgress, opts) {
   if (mod.install === 'launch-installer') {
     m.mods[modId] = { tag: core.tag, files: [], when: now, installer: core.file };
     writeManifest(game, m);
-    return { ok: true, launch: core.file, exe: game.exe, dir: game.dir, log: [ ...(typeof apiOverrideNote !== "undefined" && apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), 'Launching ' + path.basename(core.file) + ' — point it at ' + game.exe + ' and pick the right API.'] };
+    return { ok: true, launch: core.file, exe: game.exe, dir: game.dir, log: [ ...(apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), 'Launching ' + path.basename(core.file) + ' — point it at ' + game.exe + ' and pick the right API.'] };
   }
   if (core.website) { return { ok: false, website: true, url: core.url, note: core.note }; }
 
@@ -3227,7 +3231,7 @@ async function _installInner(modId, game, onProgress, opts) {
     writeManifest(game, m);
     const keptW = restoreModConfig(game, modId, keepCfg);
     if (keptW.restored) log.push('\u2713 kept ' + keptW.restored + ' of your settings');
-    return { ok: true, dir: base, kept: keptW, log: [ ...(typeof apiOverrideNote !== "undefined" && apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), '\u2713 wiz3D ' + apiFolder + '/' + bit + ' \u2192 ' + files.length + ' file(s) next to ' + game.exe, r.ok ? ('\u2713 output = ' + (WIZ_OUTPUTS[outMode] ? WIZ_OUTPUTS[outMode].label : outMode)) : ('! ' + r.error)] };
+    return { ok: true, dir: base, kept: keptW, log: [ ...(apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), '\u2713 wiz3D ' + apiFolder + '/' + bit + ' \u2192 ' + files.length + ' file(s) next to ' + game.exe, r.ok ? ('\u2713 output = ' + (WIZ_OUTPUTS[outMode] ? WIZ_OUTPUTS[outMode].label : outMode)) : ('! ' + r.error)] };
   }
 
   // 3DVision4All — proxy-DLL wrapper like wiz3D. The release ships proxy DLL options (winmm/version/
@@ -3312,7 +3316,7 @@ async function _installInner(modId, game, onProgress, opts) {
         : ('\u26a0 ' + (MODS[modId].postInstall || {}).file + ' is missing from this build \u2014 grab it from the release zip.'))
       : null;
     return { ok: true, dir: base, kept: keptV, postInstall: pi || undefined,
-      log: [ ...(typeof apiOverrideNote !== "undefined" && apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), '\u2713 3DVision4All \u2192 ' + proxyName + ' + 3dvision4all.ini next to ' + game.exe,
+      log: [ ...(apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), '\u2713 3DVision4All \u2192 ' + proxyName + ' + 3dvision4all.ini next to ' + game.exe,
             outDef ? ('\u2713 output = ' + outDef.label) : ('output = ' + outMode),
             'Nvidia GPU required \u2014 no ReShade / add-ons needed.'].concat(piLog ? [piLog] : []) };
   }
@@ -3425,7 +3429,31 @@ async function _installInner(modId, game, onProgress, opts) {
     } catch (e) { log.push('! ' + reqId + ': ' + String(e.message || e)); }
   }
 
-  if (DEFAULTS[modId]) { const f = resolveConfigPath(mod, game); if (f) { cfg.writeConfig(f, DEFAULTS[modId]); log.push('\u2713 wrote ' + path.basename(f)); } }
+  /* Seed the mod's defaults so its settings are editable before the first launch - but only the keys
+   * that are ABSENT. Writing the whole block replaced values the user had already set, which is the
+   * opposite of the documented guarantee ("defaults seed without overwriting"). */
+  if (DEFAULTS[modId]) {
+    const f = resolveConfigPath(mod, game);
+    if (f) {
+      let have = {};
+      try { have = (cfg.readConfig(f).sections) || {}; } catch (_) { have = {}; }
+      const seed = {};
+      for (const [section, kv] of Object.entries(DEFAULTS[modId])) {
+        const key = Object.keys(have).find(x => x.toLowerCase() === section.toLowerCase());
+        const cur = key ? have[key] : {};
+        const add = {};
+        for (const [k, v] of Object.entries(kv)) {
+          const hit = Object.keys(cur).find(x => x.toLowerCase() === k.toLowerCase());
+          if (hit === undefined) add[k] = v;
+        }
+        if (Object.keys(add).length) seed[section] = add;
+      }
+      if (Object.keys(seed).length) {
+        cfg.writeConfig(f, seed);
+        log.push('\u2713 seeded ' + Object.keys(seed).length + ' section(s) in ' + path.basename(f));
+      }
+    }
+  }
   const outApplied = applyOutput(modId, game, opts.output);
   if (outApplied && outApplied.set) log.push('\u2713 output \u2192 ' + Object.entries(outApplied.set).map(([k, v]) => k + ' = ' + v).join(', ') + ' in ' + outApplied.file);
   else if (outApplied && outApplied.addon) log.push('\u2713 output \u2192 full-res VR via ' + ((MODS[outApplied.addon] || {}).name || outApplied.addon));
@@ -3504,7 +3532,27 @@ async function _installInner(modId, game, onProgress, opts) {
   return { ok: true, log, tag: core.tag, kept, output: outApplied, combo3d: !!core.combo3d, needs: [], fixLink: mod.fixLink || null, launch: hostLaunch || undefined };
 }
 
+/* Renderer card ids the UI uses for the two VR-export add-ons. Accepted defensively so a stray
+ * card id can never silently resolve to "no such mod" and report a successful no-op uninstall. */
+const UNINSTALL_ALIAS = { supervr: 'supervrexport', geovr: 'geovrexport' };
+
+/**
+ * Remove one mod from one game.
+ *
+ * The manifest is the only record of what this app placed, so it is the only thing consulted.
+ * Three distinct outcomes, and they are now reported distinctly rather than all as "ok":
+ *
+ *   installed  - files were recorded; they are deleted and the record removed
+ *   adopted    - the mod was installed by hand and only registered for management; the record is
+ *                removed and NOTHING is deleted, because we never placed those files
+ *   untracked  - nothing is recorded for this id at all. This used to return { ok:true }, so the
+ *                UI cheerfully removed the mod from its list, nothing was deleted, and the next
+ *                folder rescan brought it straight back. That is exactly what "uninstall doesn't
+ *                work" looked like. It now returns ok:false with untracked:true so the caller can
+ *                say something true.
+ */
 function uninstall(modId, game) {
+  modId = UNINSTALL_ALIAS[modId] || modId;
   /* If ReShade was moved to dxgi.dll to make room for geo-11, that rename happened outside the
    * manifest, so removing ReShade has to clear it explicitly - otherwise the orphaned dxgi.dll
    * stays behind and the next mod trips over an owner that no longer exists. */
@@ -3520,23 +3568,127 @@ function uninstall(modId, game) {
       }
     } catch (_) {}
   }
-  try {
-    const man0 = readManifest(game) || { mods: {} };
-    require('./logger').app.info('uninstall ' + modId, { game: (game && (game.n || game.folder)) || '?',
-      files: ((man0.mods || {})[modId] || {}).files || [], tag: ((man0.mods || {})[modId] || {}).tag });
-  } catch (_) {}
   const base = gameBase(game);
-  const m = readManifest(game); const rec = m.mods[modId];
-  if (!rec) return { ok: true, log: [ ...(typeof apiOverrideNote !== "undefined" && apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), 'nothing recorded for ' + modId] };
-  let n = 0; const removed = [modId];
-  for (const rel of rec.files || []) { try { fs.unlinkSync(path.join(base, rel)); n++; } catch (_) {} }
-  delete m.mods[modId];
-  // remove addons that were locked to this mod
-  for (const [id, r] of Object.entries(m.mods)) {
-    if (r && r.lockedBy === modId) { for (const rel of r.files || []) { try { fs.unlinkSync(path.join(base, rel)); n++; } catch (_) {} } delete m.mods[id]; removed.push(id); }
+  if (!base) return { ok: false, error: 'This game has no folder on disk, so there is nothing to remove.' };
+
+  const m = readManifest(game);
+  m.mods = m.mods || {};
+  const rec = m.mods[modId];
+  try {
+    require('./logger').app.info('uninstall ' + modId, { game: (game && (game.n || game.folder)) || '?',
+      files: (rec && rec.files) || [], tag: rec && rec.tag, adopted: !!(rec && rec.adopted) });
+  } catch (_) {}
+
+  if (!rec) {
+    require('./logger').app.warn('uninstall: nothing recorded for ' + modId, { game: (game && (game.n || game.folder)) || '?' });
+    return { ok: false, untracked: true, removed: [], files: 0,
+      note: (MODS[modId] ? MODS[modId].name : modId) + ' is not recorded as installed for this game, so there is '
+          + 'nothing for the app to remove. If its files are on disk, they were placed by hand \u2014 use '
+          + '"Rescan mods" to adopt it first, or delete them yourself.' };
   }
+
+  const adopted = !!rec.adopted;
+  let n = 0; const failed = [];
+  const removed = [modId];
+
+  /* Delete exactly what was recorded, deepest paths first so a folder we created empties before we
+   * try to drop it. Nothing is guessed at and nothing outside the list is touched. */
+  const delFiles = (files) => {
+    const list = (files || []).slice().sort((a, b) => String(b).length - String(a).length);
+    for (const rel of list) {
+      const abs = path.join(base, rel);
+      try {
+        if (fs.existsSync(abs)) { fs.rmSync(abs, { force: true }); n++; }
+      } catch (e) {
+        const cls = classifyFsError(e, abs);
+        failed.push({ file: rel, code: (cls && cls.code) || String(e.code || e), note: cls && cls.note });
+      }
+    }
+  };
+  if (!adopted) delFiles(rec.files);
+  delete m.mods[modId];
+
+  /* Locked add-ons come off with their host (SuperVrExport with SuperDepth3D, GeoVrExport with
+   * Geo3D). They are recorded with lockedBy so this needs no per-mod special-casing. */
+  for (const [id, r] of Object.entries(m.mods)) {
+    if (r && r.lockedBy === modId) {
+      if (!r.adopted) delFiles(r.files);
+      delete m.mods[id];
+      removed.push(id);
+    }
+  }
+
+  /* Tidy up the empty directories the mod's own files lived in (reshade-shaders\Shaders and the
+   * like). Only ever removed when genuinely empty, so a folder holding anything else survives. */
+  try {
+    const dirs = [...new Set(((rec.files) || []).map(f => path.dirname(path.join(base, f))))]
+      .filter(d => d && path.resolve(d) !== path.resolve(base))
+      .sort((a, b) => b.length - a.length);
+    for (const d of dirs) { try { if (fs.readdirSync(d).length === 0) fs.rmdirSync(d); } catch (_) {} }
+  } catch (_) {}
+
+  addHistory(m, modId, rec.tag, adopted ? 'de-registered (adopted install, files left alone)' : ('uninstalled ' + n + ' file(s)'));
   writeManifest(game, m);
-  return { ok: true, log: [ ...(typeof apiOverrideNote !== "undefined" && apiOverrideNote ? ["\u26a0 " + apiOverrideNote] : []), 'removed ' + n + ' file(s)' + (removed.length > 1 ? ' (+ ' + removed.slice(1).join(', ') + ')' : '')], removed };
+
+  const note = adopted
+    ? ((MODS[modId] ? MODS[modId].name : modId) + ' is no longer managed. Its files were installed by hand, so nothing was deleted.')
+    : ('removed ' + n + ' file(s)' + (removed.length > 1 ? ' (+ ' + removed.slice(1).join(', ') + ')' : ''));
+  require('./logger').app.info('uninstall ' + (adopted ? 'DEREGISTERED ' : 'OK ') + modId, { files: n, removed, failed: failed.length });
+  return { ok: true, adopted, removed, files: n, failed, note, log: [note] };
+}
+
+/**
+ * Remove EVERY mod this app installed into one game, in dependency order.
+ *
+ * This lives in the main process on purpose. The renderer used to loop over its own in-memory list
+ * and call uninstall() per id, which failed two ways at once: the list holds the UI's card ids
+ * (supervr / geovr) rather than the registry ids the manifest is keyed by, so those calls matched
+ * no record and reported success without deleting anything; and the loop ended in a call to an
+ * undefined function, so it threw before it could refresh or report. Doing the whole thing here
+ * means the manifest - the only authority on what was placed - drives the order and the result.
+ *
+ * Guests come off before their hosts (ReShade hosts SuperDepth3D, Geo3D and both export add-ons),
+ * and loaders/converters come off last. Each removal is independent, so one failure cannot abort
+ * the rest.
+ */
+const UNINSTALL_RANK = { reshade: 90, 'reshade-shaders': 91, bepinex: 95, asiloader: 95, reframework: 95, dgvoodoo: 98 };
+function uninstallAll(game) {
+  const base = gameBase(game);
+  if (!base) return { ok: false, error: 'This game has no folder on disk.' };
+  const m = readManifest(game);
+  const ids = Object.keys((m && m.mods) || {});
+  if (!ids.length) return { ok: true, removed: [], failed: [], files: 0, nothing: true, note: 'No mods are recorded as installed for this game.' };
+
+  /* A locked add-on is removed by its host, so taking it first would double-handle it. Order the
+   * hosts and standalone mods; anything still present afterwards is swept up at the end. */
+  const order = ids.slice().sort((a, b) => (UNINSTALL_RANK[a] || 10) - (UNINSTALL_RANK[b] || 10));
+  const removed = [], failed = [];
+  let files = 0;
+  for (const id of order) {
+    const cur = readManifest(game);
+    if (!((cur.mods || {})[id])) continue;                 // already taken off with its host
+    let r = null;
+    try { r = uninstall(id, game); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+    if (r && r.ok) { files += (r.files || 0); (r.removed || [id]).forEach(x => { if (!removed.includes(x)) removed.push(x); }); }
+    else failed.push({ id, note: (r && (r.note || r.error)) || 'unknown error' });
+  }
+  require('./logger').app.info('uninstall ALL', { game: (game && (game.n || game.folder)) || '?', removed, files, failed: failed.length });
+  return { ok: failed.length === 0, removed, failed, files,
+    note: 'Removed ' + removed.length + ' mod(s) and ' + files + ' file(s).' + (failed.length ? ' ' + failed.length + ' could not be removed.' : '') };
+}
+
+/** What the app currently records as installed for a game - the single source of truth for the UI. */
+function installedMods(game) {
+  const m = readManifest(game);
+  return Object.entries((m && m.mods) || {}).map(([id, r]) => ({
+    id,
+    name: (MODS[id] && MODS[id].name) || id,
+    tag: r && r.tag,
+    adopted: !!(r && r.adopted),
+    lockedBy: (r && r.lockedBy) || null,
+    files: ((r && r.files) || []).length,
+    when: r && r.when
+  }));
 }
 
 /* Registry ids that are two packagings of the SAME mod - they share every on-disk signature, so if
@@ -4009,4 +4161,4 @@ function runPostInstall(game, modId) {
   return { ok: true, file: info.file, elevated: process.platform === 'win32' && info.elevate };
 }
 
-module.exports = { rehomeReShadeToDxgi, appUpdateApply, versionsForHubTag, hubAllReleaseRefs, postInstallInfo, runPostInstall, rehomeV4aProxy, LOADER_SLOTS, modSupportsApi, effectiveApi, disambiguateVersions, reshadeLatest, reshadeCandidates, proxySlotOwner, PROXY_SLOTS, geo11LatestHelix, geo11VerNum, geo11Candidates, headOk, dgVoodooSupports, appUpdateCheck, appUpdateDownload, verCmp, APP_REPO, setupDgVoodoo, ensureDgVoodoo, dgVoodooDllsFor, applyDx9Proxy, setupDx9VrProxy, isDx9, isDx10, bundledFile, htVersionsFor, htCatalog, htMatchGame, snapshotModConfig, restoreModConfig, gameModStatus, installReShade, reshadeDllName, latestRelease, releasesForGame, install, uninstall, detect, detectDetailed, adoptMods, resolveConfigPath, htConfigPath, coreList, coreSources, coreFolder, ensureCore, updateCore, coreFetchAll, checkUpdates, checkHeadTracking, coreRoot, userData, placeInto, effectiveRoot, proxyState, renameProxy, PROXY_CANDIDATES, wizSetOutput, wizSetConfig, wizGetConfig, resolveFile, readModConfig, writeModConfig, readModFiles, writeModFiles, analyzeConfigs, readModAnalyzed, writeAnalyzed, activePresetPath, setManualCoreRoot, ensureManualCoreDirs, manualCoreStatus, manualCoreDir, manualCoreRoot, hubAllReleases, hubDownloadAll, hubPooled, hubInstallInto, loopAllMods, bzHubGames, suggestGameForTag, gameKeys, acronym };
+module.exports = { uninstallAll, installedMods, rehomeReShadeToDxgi, appUpdateApply, versionsForHubTag, hubAllReleaseRefs, postInstallInfo, runPostInstall, rehomeV4aProxy, LOADER_SLOTS, modSupportsApi, effectiveApi, disambiguateVersions, reshadeLatest, reshadeCandidates, proxySlotOwner, PROXY_SLOTS, geo11LatestHelix, geo11VerNum, geo11Candidates, headOk, dgVoodooSupports, appUpdateCheck, appUpdateDownload, verCmp, APP_REPO, setupDgVoodoo, ensureDgVoodoo, dgVoodooDllsFor, applyDx9Proxy, setupDx9VrProxy, isDx9, isDx10, bundledFile, htVersionsFor, htCatalog, htMatchGame, snapshotModConfig, restoreModConfig, gameModStatus, installReShade, reshadeDllName, latestRelease, releasesForGame, install, uninstall, detect, detectDetailed, adoptMods, resolveConfigPath, htConfigPath, coreList, coreSources, coreFolder, ensureCore, updateCore, coreFetchAll, checkUpdates, checkHeadTracking, coreRoot, userData, placeInto, effectiveRoot, proxyState, renameProxy, PROXY_CANDIDATES, wizSetOutput, wizSetConfig, wizGetConfig, resolveFile, readModConfig, writeModConfig, readModFiles, writeModFiles, analyzeConfigs, readModAnalyzed, writeAnalyzed, activePresetPath, setManualCoreRoot, ensureManualCoreDirs, manualCoreStatus, manualCoreDir, manualCoreRoot, hubAllReleases, hubDownloadAll, hubPooled, hubInstallInto, loopAllMods, bzHubGames, suggestGameForTag, gameKeys, acronym };

@@ -256,7 +256,7 @@ const CORE_SOURCES = [
     site:'https://helixmod.blogspot.com/search/label/geo-11',
     official:'HelixMod blog',
     desc:'3D Vision-class geometric 3D driver for DX11 (davegl1234 / HelixMod). Official build, downloaded straight from HelixMod\u2019s own server \u2014 one-click. Config: d3dxdm.ini direct_mode (sbs / tab / interlaced / checkerboard / katanga_vr / nvidia_dx9), and force_stereo=2 in d3dx.ini.',
-    note:'Official HelixMod build v0.7.9 (.7z, extracted automatically) \u2014 well ahead of the GitHub mirror. If HelixMod posts a newer build, grab it from the blog and drop it into this mod\u2019s Manual core folder; the app will use that instead.' },
+    note:'Official HelixMod build v0.7.10 (.7z, extracted automatically) \u2014 well ahead of the GitHub mirror. If HelixMod posts a newer build, grab it from the blog and drop it into this mod\u2019s Manual core folder; the app will use that instead.' },
   { id:'geo11_github',    name:'geo-11 (GitHub mirror)',     strategy:'github-release', repo:'ThreeDeeJay/geo-11',
     site:'https://github.com/ThreeDeeJay/geo-11',
     official:'ThreeDeeJay mirror',

@@ -1,10 +1,18 @@
 'use strict';
 /*
- * Portable persistence. Settings/profiles/library are written to a config
- * folder NEXT TO THE APP when that's writable (portable build), otherwise
- * to the per-user data dir (installed build / dev / sandbox).
- * Everything (theme, window bounds, scan roots, token, excluded, etc.) is
- * saved automatically as soon as it changes.
+ * Persistence.
+ *
+ * settings.json / profiles.json / library.json live in the PER-USER app-data folder
+ * (%APPDATA%\Stereo3D Manager), alongside the cached mod cores.
+ *
+ * They used to be written next to the executable, which is precisely the folder an update
+ * replaces - so updating the app destroyed the user's library. Anything left in that old location
+ * is migrated here once, automatically, and the original is kept with a .migrated suffix rather
+ * than deleted. (This header used to still describe the old portable behaviour; it does not any
+ * more, and neither does the Settings page.)
+ *
+ * Everything (theme, window bounds, scan roots, token, excluded games...) is saved automatically
+ * as soon as it changes.
  */
 const fs = require('fs');
 const path = require('path');

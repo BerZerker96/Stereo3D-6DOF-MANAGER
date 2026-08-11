@@ -92,54 +92,202 @@ function readChunk(file, max) {
   } catch (_) { return Buffer.alloc(0); }
 }
 
-/** Best-effort render API by scanning the exe for imported graphics DLL names. */
+/* ===================== render-API detection =====================
+ * Modelled on how ReShade actually decides which runtime it is dealing with.
+ *
+ * ReShade does not read strings out of the executable. It hooks the loader and watches which
+ * graphics entry point the process really calls - D3D12CreateDevice, D3D11CreateDeviceAndSwapChain,
+ * Direct3DCreate9, vkCreateInstance, wglCreateContext - and configures itself from that. The static
+ * equivalent of "what does this binary actually call" is the PE IMPORT DIRECTORY, which is what
+ * src/peimports.js reads (classic imports AND delay-load imports).
+ *
+ * The old implementation substring-scanned 24 MB of the file for "d3d11.dll". That matched error
+ * strings, embedded resources, unrelated blobs and other libraries' names, which is why so many
+ * games came back with the wrong API. Two specific failure modes it produced:
+ *
+ *   - dxgi.dll counted as proof of DX11. It is not. DX10, DX11 and DX12 all import dxgi, and so do
+ *     plenty of Vulkan titles. Every DX12 game therefore ALSO claimed DX11, and because the picker
+ *     shows api[0] the wrong one frequently won.
+ *   - delay-loaded renderers were invisible. Modern engines delay-load d3d12.dll, so a DX12 game
+ *     showed no DX12 evidence at all beyond an incidental string.
+ *
+ * Evidence is now scored by how much it actually proves:
+ *
+ *   4  an imported FUNCTION that only one API has          (D3D12CreateDevice, vkCreateInstance)
+ *   3  a direct import of the API's own DLL                (d3d12.dll, d3d9.dll, opengl32.dll)
+ *   3  a delay-load import of the API's own DLL            (same weight - the loader honours both)
+ *   2  the engine DLL next to the exe imports it           (Unity/UE stubs import nothing themselves)
+ *   2  the D3D12 Agility SDK shipped beside the game       (D3D12Core.dll - conclusive for DX12)
+ *   1  a real sibling DLL in the game folder
+ *   1  the executable's own name says so                   (Control_DX12.exe)
+ *
+ * dxgi.dll on its own contributes NOTHING. It is recorded as a "DXGI family present" hint and only
+ * resolves to DX11 if nothing stronger is found, which is the correct reading: a binary that pulls
+ * in dxgi and nothing else is a DX10/11/12-class renderer whose device call is made dynamically.
+ */
+const peimports = require('./peimports');
+
+/* An imported function name that identifies exactly one API. Strongest evidence available. */
+const API_FUNCS = [
+  [/^D3D12CreateDevice|^D3D12GetDebugInterface|^D3D12SerializeRootSignature|^D3D12EnableExperimental/i, 'DX12'],
+  [/^vk[A-Z]/,                                                                                          'Vulkan'],
+  [/^D3D11CreateDevice/i,                                                                               'DX11'],
+  [/^D3D10CreateDevice|^D3D10CreateDeviceAndSwapChain/i,                                                'DX10'],
+  [/^Direct3DCreate9/i,                                                                                 'DX9'],
+  [/^Direct3DCreate8/i,                                                                                 'DX8'],
+  [/^DirectDrawCreate|^DirectDrawCreateEx|^Direct3DCreate\b/i,                                          'DX7'],
+  [/^wgl[A-Z]|^glBegin$|^glDrawArrays|^glCreateProgram/i,                                               'OpenGL']
+];
+
+/* A DLL import that identifies an API. dxgi is deliberately absent - see the header comment. */
+const API_DLLS = [
+  [/^d3d12(core)?\.dll$/i,       'DX12'],
+  [/^vulkan-1\.dll$/i,           'Vulkan'],
+  [/^d3d11(_[0-9])?\.dll$/i,     'DX11'],
+  [/^d3d10(_1)?\.dll$/i,         'DX10'],
+  [/^d3d9\.dll$/i,               'DX9'],
+  [/^d3d8\.dll$/i,               'DX8'],
+  [/^ddraw\.dll$/i,              'DX7'],
+  [/^d3dim(m)?\.dll$/i,          'DX7'],
+  [/^opengl32\.dll$/i,           'OpenGL']
+];
+
+/* Engine runtimes that carry the real renderer while the .exe is only a stub. A Unity game's
+ * executable imports almost nothing; UnityPlayer.dll is what actually creates the device. */
+const ENGINE_DLLS = ['UnityPlayer.dll', 'GameAssembly.dll', 'flecs.dll', 'GFSDK_Aftermath_Lib.x64.dll'];
+
+/** Capability order, best first. Used to break ties at equal evidence. */
+const API_ORDER = ['DX12', 'Vulkan', 'DX11', 'DX10', 'DX9', 'DX8', 'DX7', 'OpenGL'];
+
+/** Files this app (or any known wrapper) drops beside an exe. Never evidence of the game's own API. */
+const WRAPPER_NAMES = /^(d3d(8|9|10|11|12)\.dll|dxgi\.dll|ddraw\.dll|d3dimm?\.dll|opengl32\.dll|nvapi(64)?\.dll|dinput8\.dll|winmm\.dll|version\.dll|dsound\.dll|geod3d9\.dll|reshade(32|64)?\.dll|d3dcompiler_\d+\.dll)$/i;
+
+/** Score every API from one import set. Returns { api: score } plus a dxgi-seen flag. */
+function scoreImports(imp, score, weightDirect) {
+  let dxgi = false;
+  if (!imp || !imp.ok) return dxgi;
+  for (const i of imp.imports) {
+    if (/^dxgi\.dll$/i.test(i.dll)) dxgi = true;
+    for (const [re, api] of API_DLLS) if (re.test(i.dll)) score[api] = Math.max(score[api] || 0, weightDirect);
+  }
+  for (const fn of imp.fns) {
+    for (const [re, api] of API_FUNCS) if (re.test(fn)) { score[api] = Math.max(score[api] || 0, 4); break; }
+  }
+  return dxgi;
+}
+
+/**
+ * Best-effort render API for an executable, strongest evidence first.
+ *
+ * `buf` is accepted for backwards compatibility (callers already read a chunk for other checks) and
+ * is only used for the last-resort string scan when the file has no readable import table at all -
+ * a packed or heavily protected binary, for instance.
+ */
 function detectApi(exe, buf, dir) {
-  const apis = new Set();
+  const score = {};
+  const bump = (api, n) => { if (api) score[api] = Math.max(score[api] || 0, n); };
+  let dxgiSeen = false;
+  let parsed = false;
+
+  /* 1) the executable's own import table - the authoritative signal */
   try {
-    if (!buf) buf = readChunk(exe, 24 * 1024 * 1024);
-    const has = s => buf.includes(Buffer.from(s, 'ascii'));
-    if (has('d3d12.dll') || has('D3D12.dll') || has('D3D12Core.dll')) apis.add('DX12');
-    if (has('vulkan-1.dll') || has('VULKAN-1.dll')) apis.add('Vulkan');
-    if (has('d3d11.dll') || has('D3D11.dll') || has('dxgi.dll') || has('D3D11_')) apis.add('DX11');
-    if (has('d3d10.dll') || has('D3D10.dll')) apis.add('DX10');
-    if (has('d3d9.dll') || has('D3D9.dll')) apis.add('DX9');
-    if (has('d3d8.dll') || has('D3D8.dll')) apis.add('DX8');
-    // DirectDraw / Direct3D immediate-mode = the DX7-and-earlier family. Without this a DirectDraw
-    // game matched no rule at all and fell through to the DX11 default, so it was never offered
-    // dgVoodoo2 (the only thing that can actually run it on a modern stack).
-    if (has('ddraw.dll') || has('DDRAW.dll') || has('DDraw.dll')) apis.add('DX7');
-    if (has('d3dim.dll') || has('D3DIM.dll') || has('d3dimm.dll') || has('D3DImm.dll')) apis.add('DX7');
-    if (has('opengl32.dll') || has('OPENGL32.dll')) apis.add('OpenGL');
+    const imp = peimports.readImports(exe);
+    if (imp.ok) {
+      parsed = true;
+      if (scoreImports(imp, score, 3)) dxgiSeen = true;
+
+      /* 2) engine runtimes the exe imports. A Unity or stub launcher imports no graphics API at all;
+       *    the renderer lives in UnityPlayer.dll, so follow the import one hop and read ITS table. */
+      const gdir = dir || path.dirname(exe);
+      const importedDlls = new Set(imp.dlls.map(d => d.toLowerCase()));
+      for (const eng of ENGINE_DLLS) {
+        if (!importedDlls.has(eng.toLowerCase())) continue;
+        const p = path.join(gdir, eng);
+        try { if (!fs.existsSync(p)) continue; } catch (_) { continue; }
+        const ei = peimports.readImports(p);
+        if (ei.ok && scoreImports(ei, score, 2)) dxgiSeen = true;
+      }
+    }
   } catch (_) {}
-  // Real DLLs sitting in the game folder are a signal - BUT only if they are the game's own.
-  // Mods and wrappers (geo-11, ReShade, dgVoodoo, wiz3D, 3DVision4All, the geod3d9 proxy, ASI loaders)
-  // deliberately drop files with exactly these names next to the .exe. Counting those would flip a DX9
-  // game to "DX11" on the next rescan and then mis-pick the pipeline, the dgVoodoo DLL and the D3D9
-  // proxy. So we ignore anything this app installed (tracked in the manifest) and any known wrapper name.
+
+  /* 3) files that ship WITH the game. Anything this app installed, and any known wrapper name, is
+   *    excluded - a geo-11 d3d11.dll beside a DX9 game would otherwise flip it to DX11 on rescan. */
   try {
     const gdir = dir || path.dirname(exe);
-    let installed = new Set();
+    const installed = new Set();
     try {
       const man = JSON.parse(fs.readFileSync(path.join(gdir, '.stereoscope', 'manifest.json'), 'utf8'));
-      for (const m of Object.values(man.mods || {})) for (const f of (m.files || [])) installed.add(String(f).toLowerCase().replace(/\\/g, '/').split('/').pop());
+      for (const m of Object.values(man.mods || {}))
+        for (const f of (m.files || [])) installed.add(String(f).toLowerCase().replace(/\\/g, '/').split('/').pop());
     } catch (_) {}
-    const WRAPPER_NAMES = /^(d3d(8|9|10|11|12)\.dll|dxgi\.dll|ddraw\.dll|d3dimm\.dll|opengl32\.dll|nvapi(64)?\.dll|dinput8\.dll|winmm\.dll|version\.dll|dsound\.dll|geod3d9\.dll|reshade(32|64)?\.dll)$/i;
     const own = f => !installed.has(f) && !WRAPPER_NAMES.test(f);
-    const names = fs.readdirSync(gdir).map(f => f.toLowerCase()).filter(own);
-    if (names.includes('vulkan-1.dll')) apis.add('Vulkan');
-    if (names.some(f => /^d3d12/.test(f))) apis.add('DX12');
-    if (names.some(f => /^d3d11/.test(f))) apis.add('DX11');
+    const names = fs.readdirSync(gdir).filter(own).map(f => f.toLowerCase());
+    if (names.includes('vulkan-1.dll')) bump('Vulkan', 1);
+    if (names.some(f => /^d3d12/.test(f))) bump('DX12', 1);
+    if (names.some(f => /^d3d11/.test(f))) bump('DX11', 1);
+    if (names.includes('opengl32.dll')) bump('OpenGL', 1);
+
+    /* The D3D12 Agility SDK ships as D3D12\D3D12Core.dll beside the game. A title only redistributes
+     * it because it drives DX12, so this is as close to conclusive as a static check gets. */
+    for (const sub of ['D3D12', 'd3d12', '.']) {
+      try {
+        const p = path.join(gdir, sub, 'D3D12Core.dll');
+        if (fs.existsSync(p)) { bump('DX12', 2); break; }
+      } catch (_) {}
+    }
   } catch (_) {}
-  // exe-name hints (Control_DX12.exe, game_dx11.exe, ...x64vk.exe)
+
+  /* 4) the executable's own name (Control_DX12.exe, ffxiv_dx11.exe, game_vk.exe) */
   const base = String(path.basename(exe)).toLowerCase();
-  if (/dx12|d3d12/.test(base)) apis.add('DX12');
-  if (/dx11|d3d11/.test(base)) apis.add('DX11');
-  if (/dx10/.test(base)) apis.add('DX10');
-  if (/dx9|d3d9/.test(base)) apis.add('DX9');
-  if (/(^|[^a-z])vk([^a-z]|$)|vulkan/.test(base)) apis.add('Vulkan');
-  const order = ['DX12', 'Vulkan', 'DX11', 'DX10', 'DX9', 'DX8', 'DX7', 'OpenGL'];   // DX7 was missing here, so DirectDraw games were filtered out and fell back to the DX11 default
-  const out = order.filter(a => apis.has(a));
-  return out.length ? out : ['DX11']; // safe default
+  if (/dx12|d3d12/.test(base)) bump('DX12', 1);
+  if (/dx11|d3d11/.test(base)) bump('DX11', 1);
+  if (/dx10/.test(base)) bump('DX10', 1);
+  if (/dx9|d3d9/.test(base)) bump('DX9', 1);
+  if (/dx8/.test(base)) bump('DX8', 1);
+  if (/(^|[^a-z])vk([^a-z]|$)|vulkan/.test(base)) bump('Vulkan', 1);
+
+  /* 5) last resort: the old string scan, ONLY when the import table could not be read (packed or
+   *    protected binary). Scored at 1 so any real import evidence always outranks it. */
+  if (!parsed && !Object.keys(score).length) {
+    try {
+      if (!buf) buf = readChunk(exe, 24 * 1024 * 1024);
+      const has = s => buf.includes(Buffer.from(s, 'ascii'));
+      if (has('d3d12.dll') || has('D3D12.dll') || has('D3D12Core.dll')) bump('DX12', 1);
+      if (has('vulkan-1.dll') || has('VULKAN-1.dll')) bump('Vulkan', 1);
+      if (has('d3d11.dll') || has('D3D11.dll')) bump('DX11', 1);
+      if (has('d3d10.dll') || has('D3D10.dll')) bump('DX10', 1);
+      if (has('d3d9.dll') || has('D3D9.dll')) bump('DX9', 1);
+      if (has('d3d8.dll') || has('D3D8.dll')) bump('DX8', 1);
+      if (has('ddraw.dll') || has('DDRAW.dll') || has('DDraw.dll')) bump('DX7', 1);
+      if (has('d3dim.dll') || has('d3dimm.dll') || has('D3DImm.dll')) bump('DX7', 1);
+      if (has('opengl32.dll') || has('OPENGL32.dll')) bump('OpenGL', 1);
+      if (has('dxgi.dll') || has('DXGI.dll')) dxgiSeen = true;
+    } catch (_) {}
+  }
+
+  /* dxgi alone means "a DX10/11/12-class renderer that creates its device dynamically". It only
+   * decides anything when nothing stronger was found - never as a vote against DX12 or Vulkan. */
+  if (dxgiSeen && !Object.keys(score).length) bump('DX11', 1);
+
+  const found = Object.keys(score);
+  if (!found.length) return ['DX11'];                     // safe default, unchanged
+
+  /* Order by evidence, then by capability. api[0] is what the UI shows and what the recommender
+   * uses, so the strongest-evidence API must lead - this is the whole point of the rewrite. */
+  found.sort((a, b) => (score[b] - score[a]) || (API_ORDER.indexOf(a) - API_ORDER.indexOf(b)));
+  return found;
+}
+
+/** Everything detectApi found, with its evidence score - for the UI's "why?" tooltip and the logs. */
+function detectApiDetailed(exe, dir) {
+  const api = detectApi(exe, null, dir);
+  let imp = null; try { imp = peimports.readImports(exe); } catch (_) {}
+  return {
+    api,
+    parsed: !!(imp && imp.ok),
+    dlls: (imp && imp.dlls) || [],
+    graphicsDlls: ((imp && imp.dlls) || []).filter(d => /^(d3d\d+(core|_\d)?|dxgi|vulkan-1|opengl32|ddraw|d3dimm?)\.dll$/i.test(d))
+  };
 }
 
 /** Best-effort engine detection (drives the head-tracking loader choice). */
@@ -503,7 +651,10 @@ function findShippingExeDeep(root, maxDepth = 5) {
   return best;
 }
 
-/** Back-compat: main exe with a light one-level descent fallback for odd layouts. */
+/** Back-compat: main exe with a light one-level descent fallback for odd layouts.
+ *  NOTE: this function was defined TWICE. The second definition silently won, and it had lost the
+ *  JUNK_DIR guard below - so the fallback descended into _Redist / installer_files / tools, exactly
+ *  the folders section 7 exists to keep out of the search. The duplicate is gone; this is the one. */
 function pickMainExe(dir) {
   return findMainExe(dir) || (function () {
     for (const sub of safeReaddir(dir)) {
@@ -515,17 +666,6 @@ function pickMainExe(dir) {
   })();
 }
 
-/** Back-compat: main exe with a light one-level descent fallback. */
-function pickMainExe(dir) {
-  return findMainExe(dir) || (function () {
-    for (const sub of safeReaddir(dir)) {
-      if (!sub.isDirectory()) continue;
-      const inner = pickDirectExe(path.join(dir, sub.name));
-      if (inner) return inner;
-    }
-    return null;
-  })();
-}
 
 /* ---------- main scan ---------- */
 /* Folders that never contain the game.
@@ -724,4 +864,4 @@ async function scanGamesProgressive(extraRoots = [], excluded = [], onProgress =
 
 function hashHue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
-module.exports = { rankAllExes, graphicsScore, findAllExes, gameNameFor, findMainExe, findBinariesDirDeep, findShippingExeDeep, listDrives, steamLibraries, scanGames, scanGamesProgressive, listGameDirs, listGameDirsOnDrive, walkForGames, inspectGame, readBitness, detectApi, detectEngine, pickMainExe };
+module.exports = { detectApiDetailed, rankAllExes, graphicsScore, findAllExes, gameNameFor, findMainExe, findBinariesDirDeep, findShippingExeDeep, listDrives, steamLibraries, scanGames, scanGamesProgressive, listGameDirs, listGameDirsOnDrive, walkForGames, inspectGame, readBitness, detectApi, detectEngine, pickMainExe };

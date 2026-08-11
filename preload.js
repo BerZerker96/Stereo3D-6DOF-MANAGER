@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('stereo', {
   hubInstallInto: (game, tag) => ipcRenderer.invoke('hubInstallInto', game, tag),
   hubSuggest: (tags, games) => ipcRenderer.invoke('hubSuggest', tags, games),
   uninstall: (modId, game) => ipcRenderer.invoke('uninstall', modId, game),
+  uninstallAll: (game) => ipcRenderer.invoke('uninstallAll', game),
+  installedMods: (game) => ipcRenderer.invoke('installedMods', game),
   readConfig: (modId, game) => ipcRenderer.invoke('readConfig', modId, game),
   writeConfig: (modId, game, patch) => ipcRenderer.invoke('writeConfig', modId, game, patch),
   writeConfigFile: (game, rel, patch) => ipcRenderer.invoke('writeConfigFile', game, rel, patch),
